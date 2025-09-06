@@ -20,8 +20,8 @@ USE_XLSX = false;              % 如果用 .xlsx 且路径为 .xlsx，则设为 
 THRESH = 0.04;                 % 4% 达标阈值（0-1）
 TGRID = (10:0.1:25)';          % 网格搜索（列向量）
 W = [1,1,2];                   % 风险函数权重
-BOOT_B = 20;                  % Bootstrap 次数（竞赛可用 200-500）
-MC_B = 10;                   % Monte Carlo 次数（视时间调整）
+BOOT_B = 200;                  % Bootstrap 次数（ 200-500）
+MC_B = 1000;                   % Monte Carlo 次数（视时间调整）
 K_BINS = 4;                    % DP 分箱数候选（后续可用 AIC/BIC 选 k）
 MIN_PER_BIN = 20;              % 每组最小样本数
 
@@ -205,7 +205,7 @@ try
     aft_mid_coef = readtable(fullfile(OUT_DIR,'aft_mid_coef.csv'));
     aft_low_coef = readtable(fullfile(OUT_DIR,'aft_low_coef.csv'));
     aft_up_coef = readtable(fullfile(OUT_DIR,'aft_up_coef.csv'));
-    icenreg_out = readtable(fullfile(OUT_DIR,'icenreg_out.csv')); % R 预测的不同 BMI 分位数的 tgrid 生存率
+    icenreg_out = readtable(fullfile(OUT_DIR,'icenreg_out.csv'), 'VariableNamingRule', 'preserve'); % R 预测的不同 BMI 分位数的 tgrid 生存率
     disp('已加载 R 输出。');
 catch
     warning('无法加载部分 R 输出文件，将使用可用数据继续。');
@@ -221,29 +221,68 @@ fprintf("准备 IC-AFT (R 输出) 的生存预测函数 ...\n");
 if ~isempty(icenreg_out)
     % 期望 icenreg_out: 列为 week, S_BMIq1, S_BMIq2, S_BMIq3（或类似）
     % 获取 tgrid 和 bmi 分位数标签（R 输出文件头部）
-    t_R = icenreg_out.week;
-    bmi_cols = icenreg_out.Properties.VariableNames(2:end);
-    % 解析 bmi 分位数标签在表头；需要 BMI 水平；R 脚本用分位数
-    % 若有补充文件则读取；否则默认索引映射
-    % 构建 S_pred(bmi) 函数，在各列生存曲线间插值
-    S_matrix = double(table2array(icenreg_out(:,2:end))); % 明确转换为 double 类型
-    bmi_levels_file = fullfile(OUT_DIR,'icenreg_bmi_levels.csv');
-    if exist(bmi_levels_file,'file')
-        bmi_levels = double(csvread(bmi_levels_file)); % 确保为 double 类型
-    else
-        % 回退：默认用 3 个分位数：25/50/75（R 脚本默认）
-        % 若 bmi 分位数文件不存在，则用 intervals.BMI 估算
-        bmi_levels = double(quantile(rows.BMI, [0.25,0.5,0.75])); % 确保为 double 类型
+    try
+        % 确保 week 列是数值型
+        if isnumeric(icenreg_out.week)
+            t_R = double(icenreg_out.week);
+        else
+            t_R = str2double(icenreg_out.week);
+            t_R(isnan(t_R)) = []; % 删除无法转换的值
+        end
+        
+        % 尝试将表格数据转换为数值矩阵
+        try
+            S_matrix = double(table2array(icenreg_out(:,2:end))); % 明确转换为 double 类型
+        catch ME
+            warning('表格数据转换为数值矩阵失败: %s', ME.message);
+            % 尝试逐单元格转换，处理可能的字符串数值
+            data = table2cell(icenreg_out(:,2:end));
+            S_matrix = zeros(size(data));
+            for i = 1:size(data,1)
+                for j = 1:size(data,2)
+                    val = data{i,j};
+                    if isnumeric(val)
+                        S_matrix(i,j) = double(val);
+                    elseif ischar(val) || isstring(val)
+                        % 尝试将字符串转换为数值
+                        try
+                            S_matrix(i,j) = str2double(val);
+                        catch
+                            S_matrix(i,j) = 1; % 保守估计
+                        end
+                    else
+                        S_matrix(i,j) = 1; % 保守估计
+                    end
+                    % 确保在[0,1]范围内
+                    S_matrix(i,j) = max(0, min(1, S_matrix(i,j)));
+                end
+            end
+        end
+        
+        bmi_cols = icenreg_out.Properties.VariableNames(2:end);
+        % 解析 bmi 分位数标签在表头；需要 BMI 水平；R 脚本用分位数
+        % 若有补充文件则读取；否则默认索引映射
+        % 构建 S_pred(bmi) 函数，在各列生存曲线间插值
+        bmi_levels_file = fullfile(OUT_DIR,'icenreg_bmi_levels.csv');
+        if exist(bmi_levels_file,'file')
+            bmi_levels = double(csvread(bmi_levels_file)); % 确保为 double 类型
+        else
+            % 回退：默认用 3 个分位数：25/50/75（R 脚本默认）
+            % 若 bmi 分位数文件不存在，则用 intervals.BMI 估算
+            bmi_levels = double(quantile(rows.BMI, [0.25,0.5,0.75])); % 确保为 double 类型
+        end
+        % 用 meshgrid 构建插值网格
+        [Bgrid, TgridR] = meshgrid(bmi_levels, t_R);
+        
+        % 创建安全的插值函数
+        interp_with_fallback = @(bmi, t_query) safe_interp(Bgrid, TgridR, S_matrix, double(bmi), double(t_query));
+        
+        % 存储以备后用
+        icen.Sfun = interp_with_fallback;
+    catch ME
+        warning('IC-AFT 生存曲面构建失败: %s\n使用每组 KM 估计', ME.message);
+        icen.Sfun = [];
     end
-    % 用 meshgrid 构建插值网格
-    t_R = double(t_R); % 确保为 double 类型
-    [Bgrid, TgridR] = meshgrid(bmi_levels, t_R);
-    
-    % 创建安全的插值函数
-    interp_with_fallback = @(bmi, t_query) safe_interp(Bgrid, TgridR, S_matrix, double(bmi), double(t_query));
-    
-    % 存储以备后用
-    icen.Sfun = interp_with_fallback;
 else
     % 回退：后续每组用 KM
     icen.Sfun = [];
@@ -651,23 +690,30 @@ for gi = 1:nGroups
 end
 
 % 汇总 bootstrap 结果
-boot_summary = table();
+% 预先定义列名和类型
+boot_summary = table('Size', [height(group_summary), 4], ...
+                     'VariableTypes', {'double', 'double', 'double', 'double'}, ...
+                     'VariableNames', {'mean', 'std', 'ci_low', 'ci_high'});
+
 for gi = 1:height(group_summary)
     arr = boot_tstars{gi};
     if isempty(arr)
-        boot_summary.mean(gi,1) = NaN;
-        boot_summary.std(gi,1) = NaN;
-        boot_summary.ci_low(gi,1) = NaN;
-        boot_summary.ci_high(gi,1) = NaN;
+        boot_summary.mean(gi) = NaN;
+        boot_summary.std(gi) = NaN;
+        boot_summary.ci_low(gi) = NaN;
+        boot_summary.ci_high(gi) = NaN;
     else
-        boot_summary.mean(gi,1) = mean(arr);
-        boot_summary.std(gi,1) = std(arr);
+        boot_summary.mean(gi) = mean(arr);
+        boot_summary.std(gi) = std(arr);
         ci = quantile(arr,[0.025,0.975]);
-        boot_summary.ci_low(gi,1) = ci(1);
-        boot_summary.ci_high(gi,1) = ci(2);
+        boot_summary.ci_low(gi) = ci(1);
+        boot_summary.ci_high(gi) = ci(2);
     end
 end
-writetable([group_summary(:,1:end) array2table(table2array(boot_summary))], fullfile(OUT_DIR,'group_table_with_bootstrap.csv'));
+
+% 使用 horzcat 而不是数组转换，确保列类型一致
+results_with_bootstrap = [group_summary, boot_summary];
+writetable(results_with_bootstrap, fullfile(OUT_DIR,'group_table_with_bootstrap.csv'));
 
 % 清理临时文件夹
 if exist(temp_dir, 'dir')
@@ -817,19 +863,23 @@ for batch = 1:num_batches
 end
 
 % 汇总 Monte Carlo 结果
-mc_summary = table();
+% 预先定义列名和类型
+mc_summary = table('Size', [1, 4], ...
+                  'VariableTypes', {'double', 'double', 'double', 'double'}, ...
+                  'VariableNames', {'mean', 'sd', 'ci_low', 'ci_high'});
+
 arr = mc_tstars(~isnan(mc_tstars));
 if ~isempty(arr)
-    mc_summary.mean = mean(arr);
-    mc_summary.sd = std(arr);
+    mc_summary.mean(1) = mean(arr);
+    mc_summary.sd(1) = std(arr);
     ci = quantile(arr,[0.025,0.975]);
-    mc_summary.ci_low = ci(1);
-    mc_summary.ci_high = ci(2);
+    mc_summary.ci_low(1) = ci(1);
+    mc_summary.ci_high(1) = ci(2);
 else
-    mc_summary.mean = NaN;
-    mc_summary.sd = NaN;
-    mc_summary.ci_low = NaN;
-    mc_summary.ci_high = NaN;
+    mc_summary.mean(1) = NaN;
+    mc_summary.sd(1) = NaN;
+    mc_summary.ci_low(1) = NaN;
+    mc_summary.ci_high(1) = NaN;
 end
 writetable(mc_summary, fullfile(OUT_DIR,'mc_results.csv'));
 
