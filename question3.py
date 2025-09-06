@@ -45,12 +45,13 @@ plt.rcParams['axes.unicode_minus'] = False    # 正常显示负号
 def load_and_preprocess_data(file_path):
     """读取CSV并做列名自动映射、缺失值处理和标准化（支持中/英列名）。
     扩展：自动处理检测孕周 -> GA_lower/GA_upper的映射，若只有单个测量则上下界相同；
-    若存在胎儿是否健康列，会尝试构造event列（0/1）；若无法判断則默认为1（已观察）。"""
+    若存在胎儿是否健康列，会尝试构造event列（0/1）；若无法判断則默认为1（已观察）。
+    新增：支持读取所有列并映射为变量名。"""
     df = pd.read_csv(file_path)
     # 去除列名首尾空格，方便匹配中文列名（例如文件中有尾随空格）
     df.columns = df.columns.str.strip()
     print(f"原始数据形状: {df.shape}")
-    print("文件列名示例：", df.columns.tolist()[:80])
+    print("所有列名：", df.columns.tolist())
 
     # 期望的标准列名（后续代码使用这些名字）
     std_cols = [
@@ -58,7 +59,7 @@ def load_and_preprocess_data(file_path):
         "GC_content", "alignment_rate", "Y_frac", "GA_lower", "GA_upper", "event"
     ]
 
-    # 常见同义词（包含中文/英文变体），按需补充
+    # 扩展的同义词映射（包含所有可能的列名）
     synonyms = {
         "patient_id": ["patient_id", "id", "pid", "subject_id", "孕妇代码", "序号"],
         "BMI": ["bmi", "body_mass_index", "孕妇BMI", "孕妇 BMI"],
@@ -66,29 +67,55 @@ def load_and_preprocess_data(file_path):
         "height": ["height", "ht", "身高"],
         "weight": ["weight", "wt", "体重"],
         "IVF": ["ivf", "ivf妊娠", "IVF妊娠", "in_vitro", "IVF"],
-        "GC_content": ["gc_content", "gc含量", "GC含量", "gc%","GC含量","GC含量"],
+        "GC_content": ["gc_content", "gc含量", "GC含量", "gc%", "GC含量", "GC含量"],
         "alignment_rate": ["alignment_rate", "alignment", "alignment rate", "对齐率", "在参考基因组上比对的比例"],
         "Y_frac": ["y_frac", "y_fraction", "Y染色体浓度", "Y染色体的Z值", "Y染色体的Z值", "Y染色体浓度"],
         "GA_lower": ["ga_lower", "gestational_age_lower", "GA_lower", "孕周_lower", "检测孕周", "检测孕周"],
         "GA_upper": ["ga_upper", "gestational_age_upper", "GA_upper", "孕周_upper", "GA上限"],
-        "event": ["event", "status", "observed", "事件", "是否事件", "胎儿是否健康"]
+        "event": ["event", "status", "observed", "事件", "是否事件", "胎儿是否健康"],
+        # 其余列的映射，用于热力图
+        "last_menstrual_period": ["末次月经", "last_menstrual_period", "lmp"],
+        "detection_date": ["检测日期", "detection_date", "test_date"],
+        "detection_count": ["检测抽血次数", "detection_count", "blood_test_count"],
+        "raw_reads": ["原始读段数", "raw_reads", "total_reads"],
+        "duplicate_rate": ["重复读段的比例", "duplicate_rate", "dup_rate"],
+        "unique_reads": ["唯一比对的读段数", "unique_reads", "unique_aligned_reads"],
+        "chr13_z": ["13号染色体的Z值", "chr13_z", "chromosome_13_z"],
+        "chr18_z": ["18号染色体的Z值", "chr18_z", "chromosome_18_z"],
+        "chr21_z": ["21号染色体的Z值", "chr21_z", "chromosome_21_z"],
+        "chrX_z": ["X染色体的Z值", "chrX_z", "chromosome_X_z"],
+        "chrY_z": ["Y染色体的Z值", "chrY_z", "chromosome_Y_z"],
+        "X_chromosome_concentration": ["X染色体浓度", "X_chromosome_concentration", "X_conc"],
+        "chr13_gc": ["13号染色体的GC含量", "chr13_gc", "chromosome_13_gc"],
+        "chr18_gc": ["18号染色体的GC含量", "chr18_gc", "chromosome_18_gc"],
+        "chr21_gc": ["21号染色体的GC含量", "chr21_gc", "chromosome_21_gc"],
+        "filtered_reads_rate": ["被过滤掉读段数的比例", "filtered_reads_rate", "filter_rate"],
+        "aneuploidy": ["染色体的非整倍体", "aneuploidy", "chromosomal_aneuploidy"],
+        "pregnancy_count": ["怀孕次数", "pregnancy_count", "gravida"],
+        "delivery_count": ["生产次数", "delivery_count", "parity"]
     }
 
     lower_to_orig = {c.lower(): c for c in df.columns}
     rename_map = {}
     missing = []
-    for std in std_cols:
+    
+    # 处理所有标准列
+    all_std_cols = list(synonyms.keys())
+    for std in all_std_cols:
         found = False
         for alt in synonyms.get(std, [std]):
             if alt.lower() in lower_to_orig:
                 rename_map[lower_to_orig[alt.lower()]] = std
                 found = True
                 break
-        if not found:
+        if not found and std in std_cols:  # 只对核心列报告缺失
             missing.append(std)
 
     # 先重命名已有列
     df = df.rename(columns=rename_map)
+    
+    print(f"成功映射的列: {list(rename_map.values())}")
+    print(f"核心列缺失: {missing}")
 
     # 若只有 GA_lower 存在但 GA_upper 不存在，则令 GA_upper = GA_lower
     if "GA_lower" in df.columns and "GA_upper" not in df.columns:
@@ -114,14 +141,21 @@ def load_and_preprocess_data(file_path):
         else:
             df["event"] = 1  # 默认所有为观察到的事件（可根据实际数据修改）
 
-    # 数值列（后续要 impute/scale）
-    numeric_cols = ["BMI", "age", "height", "weight", "Y_frac", "GC_content", "alignment_rate"]
-    miss_num = [c for c in numeric_cols if c not in df.columns]
+    # 数值列（后续要 impute/scale）- 扩展包含所有可能的数值列
+    numeric_cols = ["BMI", "age", "height", "weight", "Y_frac", "GC_content", "alignment_rate",
+                   "raw_reads", "duplicate_rate", "unique_reads", "chr13_z", "chr18_z", "chr21_z",
+                   "chrX_z", "chrY_z", "X_chromosome_concentration", "chr13_gc", "chr18_gc", 
+                   "chr21_gc", "filtered_reads_rate", "pregnancy_count", "delivery_count"]
+    
+    # 只处理实际存在的数值列
+    existing_numeric_cols = [col for col in numeric_cols if col in df.columns]
+    miss_num = [c for c in ["BMI", "age", "height", "weight", "Y_frac", "GC_content", "alignment_rate"] 
+                if c not in df.columns]
     if miss_num:
         raise ValueError(f"缺少用于数值处理的列: {miss_num}，当前文件列: {df.columns.tolist()[:80]}")
 
     # 清洗数值列（移除括号或注释等非数字字符），并强制转换为数值，不能解析的设为 NaN
-    for col in numeric_cols:
+    for col in existing_numeric_cols:
         df[col] = df[col].astype(str).str.strip()
         df[col] = df[col].replace({'': np.nan, 'nan': np.nan})
         df[col] = df[col].str.replace(r'[^\d\.\-eE]+', '', regex=True)
@@ -155,18 +189,27 @@ def load_and_preprocess_data(file_path):
     if "GA_upper" in df.columns:
         df["GA_upper"] = df["GA_upper"].astype(float)
 
-    # 缺失值处理（数值列）
-    imputer = KNNImputer(n_neighbors=5)
-    df[numeric_cols] = imputer.fit_transform(df[numeric_cols])
+    # 缺失值处理（数值列）- 只处理实际存在的列
+    if existing_numeric_cols:
+        imputer = KNNImputer(n_neighbors=5)
+        df[existing_numeric_cols] = imputer.fit_transform(df[existing_numeric_cols])
 
     # 特征工程
-    df["BMI_age_interact"] = df["BMI"] * df["age"]
-    df["BMI_weight_ratio"] = df["BMI"] / df["weight"]
+    if "BMI" in df.columns and "age" in df.columns:
+        df["BMI_age_interact"] = df["BMI"] * df["age"]
+    if "BMI" in df.columns and "weight" in df.columns:
+        df["BMI_weight_ratio"] = df["BMI"] / df["weight"]
 
-    # 标准化
-    scale_cols = numeric_cols + ["BMI_age_interact", "BMI_weight_ratio"]
-    scaler = StandardScaler()
-    df[scale_cols] = scaler.fit_transform(df[scale_cols])
+    # 标准化 - 只对实际存在的列进行标准化
+    scale_cols = existing_numeric_cols.copy()
+    if "BMI_age_interact" in df.columns:
+        scale_cols.append("BMI_age_interact")
+    if "BMI_weight_ratio" in df.columns:
+        scale_cols.append("BMI_weight_ratio")
+    
+    if scale_cols:
+        scaler = StandardScaler()
+        df[scale_cols] = scaler.fit_transform(df[scale_cols])
 
     print(f"预处理后的数据形状: {df.shape}")
     return df
@@ -175,6 +218,118 @@ def load_and_preprocess_data(file_path):
 processed_data = load_and_preprocess_data("processed_male.csv")
 print(f"预处理后的数据形状: {processed_data.shape}")
 print(f"前5行数据:\n{processed_data.head()}")
+
+# --------------------------
+# 1.5. 绘制变量间的相关性热力图
+# --------------------------
+def plot_correlation_heatmap(df, save_path=None):
+    """绘制所有数值变量间的相关性热力图，使用原始列名"""
+    # 选择数值列
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    
+    # 排除一些不需要的列
+    exclude_cols = ['cluster', 'cluster_prob', 'Y_pred', 'gestational_weeks']
+    numeric_cols = [col for col in numeric_cols if col not in exclude_cols]
+    
+    if len(numeric_cols) < 2:
+        print("数值列数量不足，无法绘制相关性热力图")
+        return
+    
+    # 计算相关性矩阵
+    corr_matrix = df[numeric_cols].corr()
+    
+    # 定义映射关系（映射后的列名 -> 原始列名）
+    reverse_mapping = {
+        "patient_id": "孕妇代码",
+        "BMI": "孕妇BMI", 
+        "age": "年龄",
+        "height": "身高",
+        "weight": "体重",
+        "IVF": "IVF妊娠",
+        "GC_content": "GC含量",
+        "alignment_rate": "在参考基因组上比对的比例",
+        "Y_frac": "Y染色体浓度",
+        "GA_lower": "检测孕周",
+        "GA_upper": "检测孕周",
+        "event": "胎儿是否健康",
+        "last_menstrual_period": "末次月经",
+        "detection_date": "检测日期",
+        "detection_count": "检测抽血次数",
+        "raw_reads": "原始读段数",
+        "duplicate_rate": "重复读段的比例",
+        "unique_reads": "唯一比对的读段数",
+        "chr13_z": "13号染色体的Z值",
+        "chr18_z": "18号染色体的Z值",
+        "chr21_z": "21号染色体的Z值",
+        "chrX_z": "X染色体的Z值",
+        "chrY_z": "Y染色体的Z值",
+        "X_chromosome_concentration": "X染色体浓度",
+        "chr13_gc": "13号染色体的GC含量",
+        "chr18_gc": "18号染色体的GC含量",
+        "chr21_gc": "21号染色体的GC含量",
+        "filtered_reads_rate": "被过滤掉读段数的比例",
+        "aneuploidy": "染色体的非整倍体",
+        "pregnancy_count": "怀孕次数",
+        "delivery_count": "生产次数"
+    }
+    
+    # 创建显示标签（使用原始列名）
+    display_labels = []
+    for col in corr_matrix.columns:
+        if col in reverse_mapping:
+            display_labels.append(reverse_mapping[col])
+        else:
+            display_labels.append(col)
+    
+    # 创建图形
+    plt.figure(figsize=(16, 12))
+    
+    # 绘制热力图
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool))  # 只显示下三角
+    sns.heatmap(corr_matrix, 
+                mask=mask,
+                annot=True, 
+                cmap='RdBu_r', 
+                center=0,
+                square=True,
+                fmt='.2f',
+                cbar_kws={"shrink": .8},
+                annot_kws={'size': 8},
+                xticklabels=display_labels,
+                yticklabels=display_labels)
+    
+    plt.title('变量间相关性热力图', fontsize=16, pad=20)
+    plt.xticks(rotation=45, ha='right')
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+    
+    # 保存图片
+    if save_path is None:
+        save_path = os.path.join(OUT_DIR, 'correlation_heatmap.png')
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # 打印高相关性对（使用原始列名）
+    print("\n高相关性变量对 (|相关系数| > 0.7):")
+    high_corr_pairs = []
+    for i in range(len(corr_matrix.columns)):
+        for j in range(i+1, len(corr_matrix.columns)):
+            corr_val = corr_matrix.iloc[i, j]
+            if abs(corr_val) > 0.7:
+                var1_display = display_labels[i]
+                var2_display = display_labels[j]
+                high_corr_pairs.append((var1_display, var2_display, corr_val))
+    
+    if high_corr_pairs:
+        for var1, var2, corr in sorted(high_corr_pairs, key=lambda x: abs(x[2]), reverse=True):
+            print(f"{var1} - {var2}: {corr:.3f}")
+    else:
+        print("未发现高相关性变量对")
+    
+    return corr_matrix
+
+# 绘制相关性热力图
+correlation_matrix = plot_correlation_heatmap(processed_data)
 
 # --------------------------
 # 2. 贝叶斯模型平均(BMA)特征选择
