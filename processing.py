@@ -5,6 +5,19 @@ import warnings
 warnings.filterwarnings('ignore')
 import matplotlib.pyplot as plt
 import seaborn as sns
+import os  # 添加os模块以处理目录
+
+# 创建输出目录常量
+OUTPUT_DIR = "./output_q1"
+VIS_DIR = os.path.join(OUTPUT_DIR, "vis")
+
+# 确保输出目录存在
+def ensure_dir_exists(directory):
+    """创建目录（如果不存在）"""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        print(f"创建目录: {directory}")
+
 # --------------------------
 # 0. 工具函数（适配男/女胎数据）
 # --------------------------
@@ -51,9 +64,12 @@ def remove_duplicates(df):
     print(f"已清除重复数据：{before - after}条")
     return df
 
-def visualize_missing_distribution(df, title="缺失值分布"):
+def visualize_missing_distribution(df, title="缺失值分布", save=True, filename=None):
     """
     可视化缺失值分布（热力图），便于快速发现缺失模式
+    参数:
+        save: 是否保存图像（True）或显示图像（False）
+        filename: 保存的文件名（不含路径）
     """
     plt.rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体
     plt.rcParams['axes.unicode_minus'] = False    # 正常显示负号
@@ -64,7 +80,23 @@ def visualize_missing_distribution(df, title="缺失值分布"):
     plt.xlabel("列名")
     plt.ylabel("样本")
     plt.tight_layout()
-    plt.show()
+    
+    if save:
+        # 确保可视化目录存在
+        ensure_dir_exists(VIS_DIR)
+        
+        # 如果没有提供文件名，根据title创建
+        if filename is None:
+            # 替换空格和特殊字符，使文件名有效
+            filename = title.replace(" ", "_").replace(":", "_") + ".png"
+        
+        # 完整保存路径
+        save_path = os.path.join(VIS_DIR, filename)
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"热力图已保存到: {save_path}")
+    else:
+        plt.show()
 # --------------------------
 # 1. 分sheet读取原始数据（男/女胎数据）
 # --------------------------
@@ -231,8 +263,11 @@ def export_gender_data(df_male_processed, df_female_processed):
     """
     导出男/女胎儿预处理数据，分别保存为独立CSV文件
     """
-    male_output = "processed_male.csv"
-    female_output = "processed_female.csv"
+    # 确保输出目录存在
+    ensure_dir_exists(OUTPUT_DIR)
+    
+    male_output = os.path.join(OUTPUT_DIR, "processed_male.csv")
+    female_output = os.path.join(OUTPUT_DIR, "processed_female.csv")
     
     # 导出男胎数据
     df_male_processed.to_csv(male_output, index=False)
@@ -263,6 +298,10 @@ def main():
     print("NIPT数据分群体预处理（男胎sheet1/女胎sheet2）- 基于C题与建模方案")
     print("="*60)
     
+    # 确保输出目录存在
+    ensure_dir_exists(OUTPUT_DIR)
+    ensure_dir_exists(VIS_DIR)
+    
     # 1. 配置原始文件路径（需替换为实际路径）
     raw_file_path = "附件.xlsx"
     
@@ -273,9 +312,15 @@ def main():
     df_male_processed = preprocess_male_data(df_male_raw)
     df_female_processed = preprocess_female_data(df_female_raw)
 
-    # 4. 可视化缺失值分布
-    visualize_missing_distribution(df_male_processed, title="男胎儿缺失值分布")
-    visualize_missing_distribution(df_female_processed, title="女胎儿缺失值分布")
+    # 4. 可视化缺失值分布并保存到指定目录
+    visualize_missing_distribution(df_male_processed, 
+                                  title="男胎儿缺失值分布", 
+                                  save=True, 
+                                  filename="male_missing_data.png")
+    visualize_missing_distribution(df_female_processed, 
+                                  title="女胎儿缺失值分布", 
+                                  save=True, 
+                                  filename="female_missing_data.png")
 
     # 5. 导出分群体结果
     export_gender_data(df_male_processed, df_female_processed)

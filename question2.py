@@ -130,7 +130,25 @@ def load_data():
     # 尝试读取每个文件
     for key, file_path in file_list.items():
         try:
-            data[key] = pd.read_csv(file_path)
+            # 添加数据类型转换和错误处理
+            df = pd.read_csv(file_path)
+            
+            # 检查并转换数据类型 - 修复可能的转换问题
+            if key in ['group_table', 'bootstrap', 'dp_groups']:
+                # 确保BMI_group, BMI_center和t_star是数值型
+                numeric_cols = ['BMI_group', 'BMI_center', 't_star', 'reach_prob', 'ci_low', 'ci_high']
+                for col in numeric_cols:
+                    if col in df.columns:
+                        # 安全转换，使用错误处理
+                        try:
+                            # 先尝试直接转换
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                            if df[col].isna().any():
+                                print(f"警告：{key}文件中的{col}列包含无法转换为数值的元素，这些值已替换为NaN")
+                        except Exception as e:
+                            print(f"警告：转换{key}文件的{col}列时出错: {e}")
+            
+            data[key] = df
             print(f"成功读取 {key} 数据")
         except Exception as e:
             print(f"警告: 无法读取 {key} 数据: {e}")
@@ -1144,6 +1162,153 @@ def plot_optimal_timepoints_by_bmi(data):
     
     print(f"各BMI组最优时点对比图已保存至{os.path.join(VIS_DIR, 'optimal_timepoints_by_bmi.png')}")
 
+def plot_optimal_time_trend(data):
+    """
+    最优时间趋势折线图：展示最优检测时间随BMI值的连续变化
+    参数:
+        data: 包含分组信息和最优时点的字典
+    """
+    # 确保绘图前设置了中文字体
+    set_chinese_font()
+    
+    print("绘制最优时间趋势折线图...")
+    
+    # 检查必要数据
+    group_table = data.get('group_table')
+    bootstrap = data.get('bootstrap')
+    
+    if group_table is None:
+        print("缺少必要的最优时点数据，无法绘制最优时间趋势图")
+        return
+    
+    # 创建图形
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # 提取BMI和最优时点数据，添加错误处理
+    try:
+        # 确保数据是数值类型
+        bmi_centers = pd.to_numeric(group_table['BMI_center'], errors='coerce').values
+        t_stars = pd.to_numeric(group_table['t_star'], errors='coerce').values
+        
+        # 检查并移除NaN值
+        valid_mask = ~(np.isnan(bmi_centers) | np.isnan(t_stars))
+        if not valid_mask.all():
+            print(f"警告: 发现{(~valid_mask).sum()}个非数值条目，这些条目将被忽略")
+        
+        bmi_centers = bmi_centers[valid_mask]
+        t_stars = t_stars[valid_mask]
+        
+        if len(bmi_centers) == 0 or len(t_stars) == 0:
+            print("错误: 所有数据均为非数值，无法绘制趋势图")
+            return
+    except Exception as e:
+        print(f"提取BMI和最优时点数据时出错: {e}")
+        return
+    
+    # 按BMI排序
+    sort_idx = np.argsort(bmi_centers)
+    bmi_sorted = bmi_centers[sort_idx]
+    t_sorted = t_stars[sort_idx]
+    
+    # 绘制主折线图
+    main_line = ax.plot(bmi_sorted, t_sorted, 'o-', linewidth=2.5, markersize=10, 
+                      color=COLORS['model'], label='最优检测时间')
+    
+    # 添加置信区间（如果有Bootstrap结果）
+    if bootstrap is not None and 'ci_low' in bootstrap.columns:
+        ci_low = bootstrap['ci_low'].values[sort_idx]
+        ci_high = bootstrap['ci_high'].values[sort_idx]
+        
+        # 添加置信区间带
+        ax.fill_between(bmi_sorted, ci_low, ci_high, alpha=0.2, 
+                       color=COLORS['confidence'], label='95%置信区间')
+    
+    # 添加趋势线
+    try:
+        # 用多项式拟合趋势
+        z = np.polyfit(bmi_sorted, t_sorted, 2)
+        p = np.poly1d(z)
+        
+        # 生成平滑曲线
+        bmi_fine = np.linspace(min(bmi_sorted), max(bmi_sorted), 100)
+        t_trend = p(bmi_fine)
+        
+        # 绘制趋势线
+        trend_line = ax.plot(bmi_fine, t_trend, '--', linewidth=2, 
+                           color='red', label='二次趋势线')
+        
+        # 计算并显示R²
+        residuals = t_sorted - p(bmi_sorted)
+        ss_res = np.sum(residuals**2)
+        ss_tot = np.sum((t_sorted - np.mean(t_sorted))**2)
+        r_squared = 1 - (ss_res / ss_tot)
+        
+        # 显示趋势方程和R²
+        eq_text = f"t* = {z[0]:.4f}×BMI² {z[1]:+.4f}×BMI {z[2]:+.4f}"
+        ax.text(0.02, 0.95, f"趋势方程:\n{eq_text}\nR² = {r_squared:.4f}", 
+               transform=ax.transAxes, fontsize=10,
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+               verticalalignment='top')
+    except Exception as e:
+        print(f"拟合趋势线时出错: {e}")
+    
+    # 添加临床相关标记线
+    ax.axhline(y=13, color='gray', linestyle='--', alpha=0.6, label='13周（一般筛查时间）')
+    ax.axhline(y=20, color='gray', linestyle=':', alpha=0.6, label='20周（晚期阈值）')
+    
+    # 高亮临床相关BMI分界点
+    bmi_ranges = [(18.5, '低体重'), (24, '正常'), (28, '超重'), (32, '肥胖')]
+    colors = ['#c2e0ff', '#d0f0c0', '#ffecb3', '#ffcccb']
+    
+    # 添加BMI范围区域
+    bmi_min = min(bmi_sorted) - 1
+    for i, (threshold, label) in enumerate(bmi_ranges):
+        if i == 0:
+            ax.axvspan(bmi_min, threshold, alpha=0.1, color=colors[i], label=label)
+            prev = threshold
+        else:
+            ax.axvspan(prev, threshold, alpha=0.1, color=colors[i], label=label)
+            prev = threshold
+    # 最后一个范围
+    ax.axvspan(bmi_ranges[-1][0], max(bmi_sorted) + 1, alpha=0.1, color=colors[-1], label='重度肥胖')
+    
+    # 设置轴标签和标题
+    ax.set_xlabel('BMI', fontsize=14)
+    ax.set_ylabel('最优检测时间（孕周）', fontsize=14)
+    ax.set_title('最优NIPT检测时间随BMI的变化趋势', fontsize=16)
+    
+    # 设置刻度和网格
+    ax.set_xlim([min(bmi_sorted) - 1, max(bmi_sorted) + 1])
+    ax.set_ylim([min(t_sorted) - 1, max(t_sorted) + 1])
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # 创建自定义图例
+    # 分两组：线条和填充区域
+    handles1, labels1 = ax.get_legend_handles_labels()
+    
+    # 将图例分为两行
+    legend1 = ax.legend(handles1[:3], labels1[:3], loc='upper left', 
+                       title='时间线', frameon=True)
+    ax.add_artist(legend1)
+    
+    # 添加BMI分类图例
+    legend2 = ax.legend(handles1[3:], labels1[3:], loc='lower right', 
+                      title='BMI分类', frameon=True, ncol=2)
+    
+    # 添加图注
+    plt.figtext(0.5, 0.01, 
+               '注：折线图展示了最优NIPT检测时间(t*)随BMI值的连续变化；\n' + 
+               '阴影区域表示95%置信区间；虚线为二次多项式拟合趋势线。', 
+               ha='center', fontsize=10)
+    
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])
+    
+    # 保存图片
+    plt.savefig(os.path.join(VIS_DIR, 'optimal_time_trend.png'), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"最优时间趋势折线图已保存至{os.path.join(VIS_DIR, 'optimal_time_trend.png')}")
+
 # ========================= 四、不确定性分析阶段可视化 =========================
 def plot_risk_curves_with_confidence(data):
     """
@@ -1269,6 +1434,8 @@ def plot_risk_curves_with_confidence(data):
                '注：曲线表示各BMI组的风险函数；阴影区域表示95%置信带；\n' +
                '圆点表示最优时点t*；横线表示t*的95%置信区间。', 
                ha='center', fontsize=10)
+    
+       
     
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
     
@@ -1445,7 +1612,7 @@ def main():
     print("\n加载数据...")
     data = load_data()
     
-    # 定义可视化函数及其分类
+    # 执行所有可视化
     visualizations = [
         # 一、数据预处理阶段可视化
         ("数据预处理-区间删失数据分布", plot_interval_censored_data),
@@ -1459,6 +1626,7 @@ def main():
         ("风险函数-加权风险分解", plot_weighted_risk_function),
         ("风险函数-动态规划BMI分组", plot_dp_bmi_grouping),
         ("风险函数-BMI组最优时点", plot_optimal_timepoints_by_bmi),
+        ("风险函数-最优时间趋势", plot_optimal_time_trend),  # 新增的可视化函数
         
         # 四、不确定性分析阶段可视化
         ("不确定性-风险曲线置信带", plot_risk_curves_with_confidence),

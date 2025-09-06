@@ -36,23 +36,24 @@ for k=1:num_knots
 end
 formula = ['Y_frac ~ 1 + ', fixed_terms, ' + (1 + BMI|patient_id)'];
 
-if ~exist('./output','dir')
-    mkdir('./output');
+% 修改输出目录
+OUT_DIR = './output_q1';
+VIS_DIR = fullfile(OUT_DIR, 'vis');
+
+% 创建目录
+if ~exist(OUT_DIR,'dir')
+    mkdir(OUT_DIR);
 end
-if ~exist('./fig','dir')
-    mkdir('./fig');
+if ~exist(VIS_DIR,'dir')
+    mkdir(VIS_DIR);
 end
 
 % 拟合近似 GAMM
 lme = fitlme(tbl, formula);
 disp(lme);
-save('./output/problem1_lme_spline.mat','lme');
+save(fullfile(OUT_DIR, 'problem1_lme_spline.mat'),'lme');
 
 % 可视化
-if ~exist('./fig','dir')
-    mkdir('./fig');
-end
-
 figure; hold on;
 scatter(tbl.gestational_weeks, tbl.Y_frac, 10, 'filled', 'MarkerFaceAlpha',0.2);
 xfit = linspace(min(tbl.gestational_weeks), max(tbl.gestational_weeks), 100)';
@@ -73,8 +74,8 @@ yfit = predict(lme, Xfit);
 plot(xfit, yfit, 'r-', 'LineWidth', 2);
 xlabel('Gestational weeks'); ylabel('Y concentration (%)');
 title('GAMM (spline basis) fit');
-% 保存并覆盖
-saveas(gcf, fullfile(pwd,'fig','problem1_GAMM_spline.png'));
+% 保存到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_GAMM_spline.png'));
 close(gcf);
 
 % --- 三维响应面（Y_frac ~ gestational_weeks + BMI） ---
@@ -104,8 +105,8 @@ ylabel('BMI');
 zlabel('Predicted Y concentration (%)');
 title('三维响应面：Y浓度 vs 孕周 & BMI');
 colorbar;
-% 保存并覆盖
-saveas(gcf, fullfile(pwd,'fig','problem1_surface.png'));
+% 保存到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_surface.png'));
 close(gcf);
 
 % --- 部分依赖图 ---
@@ -127,8 +128,8 @@ plot(x_ga, y_pred, 'b-', 'LineWidth', 2);
 xlabel('检测孕周');
 ylabel('Y染色体浓度 (%)');
 title('部分依赖图：孕周对Y浓度的影响（BMI取均值）');
-% 保存并覆盖
-saveas(gcf, fullfile(pwd,'fig','problem1_pd_gestweeks.png'));
+% 保存到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_pd_gestweeks.png'));
 close(gcf);
 
 figure;
@@ -166,9 +167,8 @@ ylabel('Predicted Y concentration (%)');
 title('部分依赖图：BMI对Y浓度的影响（对孕周边缘化）');
 legend({'平滑 PD','原始 PD'}, 'Location','best');
 
-% 保存并覆盖
-if ~exist('./fig','dir'); mkdir('./fig'); end
-saveas(gcf, fullfile(pwd,'fig','problem1_pd_BMI.png'));
+% 保存到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_pd_BMI.png'));
 close(gcf);
 
 % --- 临床查询表（孕周×BMI对应Y浓度预测） ---
@@ -195,7 +195,8 @@ for i = 1:length(ga_grid)
     end
 end
 query_tbl = cell2table(query_tbl, 'VariableNames', {'GestationalWeeks','BMI','Predicted_Yfrac'});
-writetable(query_tbl, './output/problem1_clinical_query_table.csv');
+% 保存到新路径
+writetable(query_tbl, fullfile(OUT_DIR, 'problem1_clinical_query_table.csv'));
 
 % --- 临床概率查询表（Y染色体浓度≥4%的预测概率） ---
 % 设置更密集的孕周网格（10-20周，间隔0.5周）
@@ -312,9 +313,9 @@ if max_prob < 0.01
     end
 end
 
-% 转换为表格并保存
+% 转换为表格并保存到新路径
 prob_query_tbl = cell2table(prob_query_tbl, 'VariableNames', {'GestationalWeeks', 'BMI', 'Predicted_Yfrac', 'Probability_Above_4percent'});
-writetable(prob_query_tbl, './output/problem1_clinical_probability_table.csv');
+writetable(prob_query_tbl, fullfile(OUT_DIR, 'problem1_clinical_probability_table.csv'));
 
 % 创建直观的热图- 使用MATLAB内置heatmap函数
 figure('Position', [100, 100, 900, 500]);
@@ -327,23 +328,17 @@ h.YLabel = 'BMI';
 h.ColorbarVisible = 'on';
 colormap(jet);
 
-% 保存图像
-saveas(gcf, './fig/problem1_probability_heatmap_clean.png');
+% 保存图像到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_probability_heatmap_clean.png'));
 close(gcf);
 
-% 导出为 CSV（数据与模型结果） - 更健壮的导出实现
-if ~exist('./output','dir'); mkdir('./output'); end
+% 导出为 CSV（数据与模型结果）- 更健壮的导出实现
 % 导出原始/处理后数据
-writetable(tbl, fullfile(pwd,'output','problem1_data.csv'));
-
-% 若 clinical 查询表存在则导出
-if exist('query_tbl','var') && ~isempty(query_tbl)
-    writetable(query_tbl, fullfile(pwd,'output','problem1_clinical_query_table.csv'));
-end
+writetable(tbl, fullfile(OUT_DIR, 'problem1_data.csv'));
 
 % 导出 lme 系数与随机效应（更稳健、兼容多种返回类型）
-coefPath = fullfile(pwd,'output','problem1_lme_coefficients.csv');
-rePath   = fullfile(pwd,'output','problem1_lme_random_effects.csv');
+coefPath = fullfile(OUT_DIR, 'problem1_lme_coefficients.csv');
+rePath   = fullfile(OUT_DIR, 'problem1_lme_random_effects.csv');
 
 % 导出固定效应 coef
 try
@@ -385,7 +380,38 @@ catch ME
     warning('无法导出随机效应 randomEffects(lme): %s', ME.message);
 end
 
-% 在脚本末尾替换原有辅助函数
+% --- 交互二维部分依赖面：孕周 × BMI ---
+nga = 60; nbmi = 60;            % 网格分辨率，可调整
+ga_grid = linspace(min(tbl.gestational_weeks), max(tbl.gestational_weeks), nga);
+bmi_grid = linspace(min(tbl.BMI), max(tbl.BMI), nbmi);
+[GA, BMI] = meshgrid(ga_grid, bmi_grid);
+
+% 批量构造预测表（向量化），注意 buildPredictTable_lme 支持向量输入
+Gvec = GA(:);
+Bvec = BMI(:);
+Xpred_int = buildPredictTable_lme(lme, tbl, reshape(Gvec,[],1), reshape(Bvec,[],1), knots);
+
+% 预测并重塑为矩阵
+ypred_int = predict(lme, Xpred_int);
+Z = reshape(ypred_int, nbmi, nga);  % 行对应 bmi_grid，列对应 ga_grid
+
+% 绘图：热图 + 等高线
+figure;
+imagesc(ga_grid, bmi_grid, Z); set(gca,'YDir','normal');
+colormap(parula); colorbar;
+hold on;
+contour(ga_grid, bmi_grid, Z, 8, 'k-', 'LineWidth', 0.6);
+xlabel('检测孕周');
+ylabel('BMI');
+title('交互部分依赖：孕周 × BMI 对 Y染色体浓度的预测');
+% 可选：在图上标记观测点分布（透明小点）
+scatter(tbl.gestational_weeks, tbl.BMI, 8, 'w', 'filled', 'MarkerFaceAlpha', 0.15);
+
+% 保存到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_interaction_pd.png'));
+close(gcf);
+
+% 在脚本末尾使用原有辅助函数
 function Tpred = buildPredictTable_lme(lme, tbl, gestVec, bmiVec, knots)
 % 构造与 lme.PredictorNames 顺序完全一致的预测表
 n = numel(gestVec);
@@ -458,8 +484,6 @@ end
 end
 
 % --- 交互二维部分依赖面：孕周 × BMI ---
-if ~exist('./fig','dir'); mkdir('./fig'); end
-
 nga = 60; nbmi = 60;            % 网格分辨率，可调整
 ga_grid = linspace(min(tbl.gestational_weeks), max(tbl.gestational_weeks), nga);
 bmi_grid = linspace(min(tbl.BMI), max(tbl.BMI), nbmi);
@@ -486,8 +510,8 @@ title('交互部分依赖：孕周 × BMI 对 Y染色体浓度的预测');
 % 可选：在图上标记观测点分布（透明小点）
 scatter(tbl.gestational_weeks, tbl.BMI, 8, 'w', 'filled', 'MarkerFaceAlpha', 0.15);
 
-% 保存并覆盖
-saveas(gcf, fullfile(pwd,'fig','problem1_interaction_pd.png'));
+% 保存到新路径
+saveas(gcf, fullfile(VIS_DIR, 'problem1_interaction_pd.png'));
 close(gcf);
 
 % 辅助函数：将任意单元格项转换为字符串以便写入 CSV

@@ -7,6 +7,12 @@ from sklearn.metrics import roc_auc_score, roc_curve, confusion_matrix, classifi
 from sklearn.metrics import recall_score, precision_score, f1_score, accuracy_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import VotingClassifier
+from imblearn.over_sampling import SMOTE
+import xgboost as xgb
+import lightgbm as lgb
+import shap
+import pickle
+import os
 from sklearn.inspection import partial_dependence
 try:
     # 尝试导入新API
@@ -14,19 +20,18 @@ try:
 except ImportError:
     # 如果不可用，将创建一个兼容的替代函数
     pass
-from imblearn.over_sampling import SMOTE
-import xgboost as xgb
-import lightgbm as lgb
-import shap
-import pickle
-import os
-import matplotlib as mpl
 
 # 创建输出目录
 OUT_DIR = "output_q4"
+VIS_DIR = os.path.join(OUT_DIR, "vis")  # 新增可视化专用目录
+
 if not os.path.exists(OUT_DIR):
     os.makedirs(OUT_DIR)
     print(f"创建输出目录: {OUT_DIR}")
+
+if not os.path.exists(VIS_DIR):  # 确保可视化目录存在
+    os.makedirs(VIS_DIR)
+    print(f"创建可视化目录: {VIS_DIR}")
 
 # 设置随机种子，保证可复现性
 SEED = 42
@@ -441,7 +446,7 @@ class FemaleFetalModel:
         plt.title(f'{model_name} ROC曲线')
         plt.legend()
         plt.grid(True)
-        plt.savefig(os.path.join(OUT_DIR, f'{model_name}_roc_curve.png'))
+        plt.savefig(os.path.join(VIS_DIR, f'{model_name}_roc_curve.png'))  # 修改保存路径
         plt.close()
 
     def plot_confusion_matrix(self, y_true, y_pred, model_name):
@@ -454,7 +459,7 @@ class FemaleFetalModel:
         plt.xlabel('预测结果')
         plt.ylabel('实际结果')
         plt.title(f'{model_name} 混淆矩阵')
-        plt.savefig(os.path.join(OUT_DIR, f'{model_name}_confusion_matrix.png'))
+        plt.savefig(os.path.join(VIS_DIR, f'{model_name}_confusion_matrix.png'))  # 修改保存路径
         plt.close()
 
     def threshold_sensitivity_analysis(self):
@@ -693,20 +698,21 @@ class FemaleFetalModel:
                              plot_type="bar", show=False)
         
         plt.title("SHAP全局特征重要性", fontsize=14)  # 增加字体大小
-        # 增加bbox_inches='tight'确保标题完全显示
-        plt.savefig(os.path.join(OUT_DIR, 'shap_global_importance.png'), bbox_inches='tight', dpi=300)
+        # 修改保存路径
+        plt.savefig(os.path.join(VIS_DIR, 'shap_global_importance.png'), bbox_inches='tight', dpi=300)
         plt.close()
 
-        # 绘制蜂群图
-        plt.figure(figsize=(10, 6))
+        # 绘制蜂群图 - 增加图形尺寸，特别是宽度
+        plt.figure(figsize=(16, 12))  # 从(10, 6)改为(16, 12)
         
         with temp_seed(42):
             shap.summary_plot(shap_values, self.X_test_scaled, 
                              feature_names=self.feature_names, 
                              show=False)
         
-        plt.title("SHAP特征影响蜂群图")
-        plt.savefig(os.path.join(OUT_DIR, 'shap_beeswarm.png'))
+        plt.title("SHAP特征影响蜂群图", fontsize=16, pad=20)  # 增加字体大小和顶部填充
+        # 修改保存路径，添加bbox_inches参数确保完整显示
+        plt.savefig(os.path.join(VIS_DIR, 'shap_beeswarm.png'), bbox_inches='tight', dpi=300)
         plt.close()
 
         # 绘制部分依赖图（针对最重要的特征）
@@ -744,7 +750,8 @@ class FemaleFetalModel:
                    ha='center', va='center', transform=ax.transAxes)
         
         plt.title(f"{top_feature_name}的部分依赖图")
-        plt.savefig(os.path.join(OUT_DIR, f'pdp_{top_feature_name}.png'))
+        # 修改保存路径
+        plt.savefig(os.path.join(VIS_DIR, f'pdp_{top_feature_name}.png'))
         plt.close()
 
         # 如果指定了样本，绘制个体SHAP瀑布图
@@ -834,7 +841,8 @@ class FemaleFetalModel:
                                    transform=ax.transAxes)
                     
                     plt.tight_layout()
-                    plt.savefig(os.path.join(OUT_DIR, f'shap_waterfall_sample_{sample_index}.png'))
+                    # 修改保存路径
+                    plt.savefig(os.path.join(VIS_DIR, f'shap_waterfall_sample_{sample_index}.png'))
                     plt.close()
                 except Exception as e:
                     print(f"自定义瀑布图绘制失败: {e}")
@@ -864,7 +872,8 @@ class FemaleFetalModel:
                                       bbox=dict(facecolor='white', alpha=0.8))
                         
                         plt.tight_layout()
-                        plt.savefig(os.path.join(OUT_DIR, f'shap_waterfall_sample_{sample_index}.png'))
+                        # 修改保存路径
+                        plt.savefig(os.path.join(VIS_DIR, f'shap_waterfall_sample_{sample_index}.png'))
                         plt.close()
                     except Exception as e:
                         print(f"SHAP瀑布图尝试失败: {e}")
@@ -877,7 +886,8 @@ class FemaleFetalModel:
                         plt.xticks(rotation=45)
                         plt.title(f"样本 {sample_index} 的特征重要性")
                         plt.tight_layout()
-                        plt.savefig(os.path.join(OUT_DIR, f'shap_waterfall_sample_{sample_index}.png'))
+                        # 修改保存路径
+                        plt.savefig(os.path.join(VIS_DIR, f'shap_waterfall_sample_{sample_index}.png'))
                         plt.close()
             except Exception as e:
                 print(f"SHAP瀑布图绘制完全失败: {e}")
@@ -890,7 +900,8 @@ class FemaleFetalModel:
                          range(1, len(self.feature_names)+1))
                 plt.title(f"样本 {sample_index} 的特征重要性")
                 plt.tight_layout()
-                plt.savefig(os.path.join(OUT_DIR, f'shap_sample_{sample_index}_importance.png'))
+                # 修改保存路径
+                plt.savefig(os.path.join(VIS_DIR, f'shap_sample_{sample_index}_importance.png'))
                 plt.close()
 
     def save_model(self, model_name='xgb_model', path=None):
