@@ -15,7 +15,7 @@
 clear; close all; clc;
 
 %% ---------- 配置 ----------
-DATA_PATH = "processed_male.csv";        % <-- 修改为你的文件路径 (.csv 或 .xlsx)
+DATA_PATH = "processed_male.csv";        % <-- 文件路径 (.csv 或 .xlsx)
 USE_XLSX = false;              % 如果用 .xlsx 且路径为 .xlsx，则设为 true
 THRESH = 0.04;                 % 4% 达标阈值（0-1）
 TGRID = (10:0.1:25)';          % 网格搜索（列向量）

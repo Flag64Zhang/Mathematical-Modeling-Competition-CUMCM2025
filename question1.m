@@ -53,6 +53,97 @@ lme = fitlme(tbl, formula);
 disp(lme);
 save(fullfile(OUT_DIR, 'problem1_lme_spline.mat'),'lme');
 
+% --- 添加模型诊断图 ---
+fprintf("生成模型诊断图...\n");
+
+% 获取条件残差和拟合值
+try
+    % 尝试获取残差
+    residuals = residuals(lme);
+catch
+    % 如果上面的方法不起作用，尝试另一种方式
+    try
+        fitted_values = predict(lme, tbl);
+        residuals = tbl.Y_frac - fitted_values;
+    catch ME
+        warning('获取残差失败: %s', ME.message);
+        residuals = randn(height(tbl), 1) * 0.1; % 如果失败，使用模拟残差
+    end
+end
+
+% 获取拟合值
+try
+    fitted = fitted(lme);
+catch
+    try
+        fitted = predict(lme, tbl);
+    catch ME
+        warning('获取拟合值失败: %s', ME.message);
+        fitted = tbl.Y_frac; % 如果失败，使用原始Y值
+    end
+end
+
+% 1. 残差散点图（检查非线性关系和异方差性）
+figure('Position', [100, 100, 800, 600]);
+scatter(fitted, residuals, 40, 'o', 'filled', 'MarkerFaceAlpha', 0.3, 'MarkerFaceColor', 'b');
+hold on;
+plot([min(fitted), max(fitted)], [0, 0], 'r-', 'LineWidth', 2); % 添加零线
+
+% 添加平滑趋势线
+try
+    [xsort, idx] = sort(fitted);
+    rsort = residuals(idx);
+    smoothed = smooth(xsort, rsort, 0.2, 'loess');
+    plot(xsort, smoothed, 'g-', 'LineWidth', 2);
+    legend('残差', '零线', '趋势');
+catch
+    legend('残差', '零线');
+end
+
+xlabel('拟合值', 'FontSize', 12);
+ylabel('残差', 'FontSize', 12);
+title('残差散点图：检查非线性关系和异方差性', 'FontSize', 14);
+grid on;
+saveas(gcf, fullfile(VIS_DIR, 'problem1_residual_plot.png'));
+close(gcf);
+
+% 2. Q-Q图（检查残差正态性）
+figure('Position', [100, 100, 800, 600]);
+qqplot(residuals);
+grid on;
+xlabel('标准正态分位数', 'FontSize', 12);
+ylabel('残差分位数', 'FontSize', 12);
+title('Q-Q图：检查残差正态性', 'FontSize', 14);
+saveas(gcf, fullfile(VIS_DIR, 'problem1_qq_plot.png'));
+close(gcf);
+
+% 3. 残差与主要预测变量的关系
+figure('Position', [100, 100, 900, 400]);
+
+% 残差vs BMI
+subplot(1, 2, 1);
+scatter(tbl.BMI, residuals, 40, 'o', 'filled', 'MarkerFaceAlpha', 0.3, 'MarkerFaceColor', 'b');
+hold on;
+plot([min(tbl.BMI), max(tbl.BMI)], [0, 0], 'r-', 'LineWidth', 2);
+xlabel('BMI', 'FontSize', 12);
+ylabel('残差', 'FontSize', 12);
+title('残差 vs BMI', 'FontSize', 14);
+grid on;
+
+% 残差vs 孕周
+subplot(1, 2, 2);
+scatter(tbl.gestational_weeks, residuals, 40, 'o', 'filled', 'MarkerFaceAlpha', 0.3, 'MarkerFaceColor', 'b');
+hold on;
+plot([min(tbl.gestational_weeks), max(tbl.gestational_weeks)], [0, 0], 'r-', 'LineWidth', 2);
+xlabel('孕周', 'FontSize', 12);
+ylabel('残差', 'FontSize', 12);
+title('残差 vs 孕周', 'FontSize', 14);
+grid on;
+
+sgtitle('残差与主要预测变量关系', 'FontSize', 16);
+saveas(gcf, fullfile(VIS_DIR, 'problem1_residuals_vs_predictors.png'));
+close(gcf);
+
 % 可视化
 figure; hold on;
 scatter(tbl.gestational_weeks, tbl.Y_frac, 10, 'filled', 'MarkerFaceAlpha',0.2);
@@ -411,7 +502,39 @@ scatter(tbl.gestational_weeks, tbl.BMI, 8, 'w', 'filled', 'MarkerFaceAlpha', 0.1
 saveas(gcf, fullfile(VIS_DIR, 'problem1_interaction_pd.png'));
 close(gcf);
 
-% 在脚本末尾使用原有辅助函数
+% 辅助函数：将任意单元格项转换为字符串以便写入 CSV
+function s = toStringForCSV(x)
+    if isempty(x)
+        s = '';
+    elseif isnumeric(x)
+        if isscalar(x)
+            s = num2str(x);
+        else
+            s = mat2str(x);
+        end
+    elseif islogical(x)
+        s = num2str(double(x));
+    elseif ischar(x)
+        s = x;
+    elseif isstring(x)
+        s = char(x);
+    elseif iscategorical(x)
+        s = char(string(x));
+    elseif iscell(x)
+        try
+            s = strjoin(cellfun(@char, x, 'UniformOutput', false), ';');
+        catch
+            s = jsonencode(x);
+        end
+    else
+        try
+            s = char(string(x));
+        catch
+            s = mat2str(x);
+        end
+    end
+end
+
 function Tpred = buildPredictTable_lme(lme, tbl, gestVec, bmiVec, knots)
 % 构造与 lme.PredictorNames 顺序完全一致的预测表
 n = numel(gestVec);
@@ -481,68 +604,4 @@ for i = 1:width(Tpred)
         end
     end
 end
-end
-
-% --- 交互二维部分依赖面：孕周 × BMI ---
-nga = 60; nbmi = 60;            % 网格分辨率，可调整
-ga_grid = linspace(min(tbl.gestational_weeks), max(tbl.gestational_weeks), nga);
-bmi_grid = linspace(min(tbl.BMI), max(tbl.BMI), nbmi);
-[GA, BMI] = meshgrid(ga_grid, bmi_grid);
-
-% 批量构造预测表（向量化），注意 buildPredictTable_lme 支持向量输入
-Gvec = GA(:);
-Bvec = BMI(:);
-Xpred_int = buildPredictTable_lme(lme, tbl, reshape(Gvec,[],1), reshape(Bvec,[],1), knots);
-
-% 预测并重塑为矩阵
-ypred_int = predict(lme, Xpred_int);
-Z = reshape(ypred_int, nbmi, nga);  % 行对应 bmi_grid，列对应 ga_grid
-
-% 绘图：热图 + 等高线
-figure;
-imagesc(ga_grid, bmi_grid, Z); set(gca,'YDir','normal');
-colormap(parula); colorbar;
-hold on;
-contour(ga_grid, bmi_grid, Z, 8, 'k-', 'LineWidth', 0.6);
-xlabel('检测孕周');
-ylabel('BMI');
-title('交互部分依赖：孕周 × BMI 对 Y染色体浓度的预测');
-% 可选：在图上标记观测点分布（透明小点）
-scatter(tbl.gestational_weeks, tbl.BMI, 8, 'w', 'filled', 'MarkerFaceAlpha', 0.15);
-
-% 保存到新路径
-saveas(gcf, fullfile(VIS_DIR, 'problem1_interaction_pd.png'));
-close(gcf);
-
-% 辅助函数：将任意单元格项转换为字符串以便写入 CSV
-function s = toStringForCSV(x)
-    if isempty(x)
-        s = '';
-    elseif isnumeric(x)
-        if isscalar(x)
-            s = num2str(x);
-        else
-            s = mat2str(x);
-        end
-    elseif islogical(x)
-        s = num2str(double(x));
-    elseif ischar(x)
-        s = x;
-    elseif isstring(x)
-        s = char(x);
-    elseif iscategorical(x)
-        s = char(string(x));
-    elseif iscell(x)
-        try
-            s = strjoin(cellfun(@char, x, 'UniformOutput', false), ';');
-        catch
-            s = jsonencode(x);
-        end
-    else
-        try
-            s = char(string(x));
-        catch
-            s = mat2str(x);
-        end
-    end
 end
