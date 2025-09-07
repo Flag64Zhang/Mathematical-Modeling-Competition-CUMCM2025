@@ -309,7 +309,7 @@ fprintf('风险函数定义完成\n');
 fprintf("对 (BMI, Tmid) 做 GMM 聚类以获得初步分组 ...\n");
 % 对 sets.mid 的 {BMI, T} 做 GMM
 BMI_T = [mid.BMI, mid.T];
-% 用 BIC 类似方法选分量数
+% 用 BIC 法选分量数
 maxComp = 5;
 bestBIC = inf; bestGM = [];
 for k = 1:min(maxComp, size(BMI_T,1)-1)
@@ -763,12 +763,7 @@ end
 results_with_bootstrap = [group_summary, boot_summary];
 writetable(results_with_bootstrap, fullfile(OUT_DIR,'group_table_with_bootstrap.csv'));
 
-% 清理临时文件夹
-if exist(temp_dir, 'dir')
-    rmdir(temp_dir, 's');
-end
-
-%% ---------- 4.6 Monte Carlo 误差分析 ----------
+%% ---------- 4.5 Monte Carlo 误差分析 ----------
 fprintf("正在运行 Monte Carlo 仿真 (B=%d) ...\n", MC_B);
 mc_tstars = zeros(MC_B,1);
 
@@ -943,6 +938,111 @@ delete(fullfile(OUT_DIR, 'boot_sample_*.csv'));
 delete(fullfile(OUT_DIR, 'mc_sample_*.csv'));
 delete(fullfile(OUT_DIR, 'icenreg_boot_out_*.csv'));
 delete(fullfile(OUT_DIR, 'icenreg_mc_out_*.csv'));
+
+
+%% ---------- 5. 生成最终BMI分组表 ----------
+fprintf("\n正在生成最终BMI分组临床参考表...\n");
+
+% 设置中文表格路径
+FINAL_TABLE_PATH = fullfile(OUT_DIR, "bmi_groups_cn.csv");
+
+% 读取区间删失数据用于计算样本量
+try
+    interval_data = readtable(fullfile(OUT_DIR, "GA_intervals_DPgroups.csv"));
+    fprintf("已加载区间删失数据\n");
+catch
+    interval_data = rows;  % 使用已有的rows变量
+    fprintf("使用内存中的区间数据\n");
+end
+
+%% 计算每组样本数
+fprintf("计算每组样本数...\n");
+group_ids = unique(results_with_bootstrap.BMI_group);
+sample_counts = zeros(size(group_ids));
+
+for i = 1:length(group_ids)
+    g = group_ids(i);
+    sample_counts(i) = sum(interval_data.BMI_group == g);
+end
+
+%% 计算BMI区间
+fprintf("计算BMI区间...\n");
+bmi_ranges = cell(length(group_ids), 1);
+
+% 对组按BMI_center排序
+[~, sort_idx] = sort(results_with_bootstrap.BMI_center);
+results_sorted = results_with_bootstrap(sort_idx, :);
+sample_counts = sample_counts(sort_idx);
+group_ids = group_ids(sort_idx);
+
+% 获取所有BMI值
+all_bmi = interval_data.BMI;
+
+% 为每组确定BMI范围
+for i = 1:length(group_ids)
+    g = group_ids(i);
+    group_bmi = all_bmi(interval_data.BMI_group == g);
+    if ~isempty(group_bmi)
+        min_bmi = min(group_bmi);
+        max_bmi = max(group_bmi);
+        
+        % 舍入到1位小数
+        min_bmi = floor(min_bmi * 10) / 10;
+        max_bmi = ceil(max_bmi * 10) / 10;
+        
+        if i == 1
+            bmi_ranges{i} = sprintf("≤%.1f", max_bmi);
+        elseif i == length(group_ids)
+            bmi_ranges{i} = sprintf(">%.1f", min_bmi);
+        else
+            bmi_ranges{i} = sprintf("%.1f-%.1f", min_bmi, max_bmi);
+        end
+    else
+        bmi_ranges{i} = "N/A";
+    end
+end
+
+%% 创建中文表格
+fprintf("创建中文BMI分组表...\n");
+
+% 初始化表格（直接使用中文列名）- 删除不需要的列，增加期望风险列
+var_names = {'BMI组', 'BMI范围', '样本数', '推荐孕周', '达标率(%)', '期望风险(周)'};
+
+var_types = {'double', 'string', 'double', 'double', 'double', 'double'};
+
+final_table_cn = table('Size', [length(group_ids), length(var_names)], ...
+                     'VariableNames', var_names, ...
+                     'VariableTypes', var_types);
+
+% 填充表格数据 - 修改列结构
+for i = 1:length(group_ids)
+    % 使用表格索引语法 table{row, column_name} 进行赋值
+    final_table_cn{i, 'BMI组'} = group_ids(i);
+    final_table_cn{i, 'BMI范围'} = bmi_ranges{i};
+    final_table_cn{i, '样本数'} = sample_counts(i);
+    final_table_cn{i, '推荐孕周'} = round(results_sorted.t_star(i) * 10) / 10; % 舍入到1位小数
+    final_table_cn{i, '达标率(%)'} = round(results_sorted.reach_prob(i) * 1000) / 10; % 转换为百分比，1位小数
+    
+    % 计算期望风险(周)：用推荐孕周 + 风险评分作为期望风险
+    % 风险评分是根据risk函数计算的，已经包含了达标率和延迟风险
+    % 这里我们直接将风险评分乘以一个系数（如5）以转换为周单位
+    t_star = results_sorted.t_star(i);
+    risk_score = results_sorted.min_risk(i);
+    
+    % 使用特定公式计算期望风险（周）- 基于推荐孕周和原始风险
+    % 期望风险 = 推荐孕周 + 风险系数 × 原始风险
+    risk_factor = 2; % 风险转换系数
+    expected_risk_weeks = round((t_star + risk_factor * risk_score) * 10) / 10;
+    final_table_cn{i, '期望风险(周)'} = expected_risk_weeks;
+end
+
+%% 保存表格并显示
+fprintf("保存中文BMI分组表到 %s...\n", FINAL_TABLE_PATH);
+writetable(final_table_cn, FINAL_TABLE_PATH);
+disp(final_table_cn);
+fprintf("中文BMI分组临床参考表已保存到: %s\n", FINAL_TABLE_PATH);
+
+fprintf('\n全部分析完成!\n');
 
 %% ========== 局部函数定义 ==========
 

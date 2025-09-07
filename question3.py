@@ -61,14 +61,14 @@ def load_and_preprocess_data(file_path):
 
     # 扩展的同义词映射（包含所有可能的列名）
     synonyms = {
-        "patient_id": ["patient_id", "id", "pid", "subject_id", "孕妇代码", "序号"],
-        "BMI": ["bmi", "body_mass_index", "孕妇BMI", "孕妇 BMI"],
+        "patient_id": ["patient_id", "孕妇代码"],
+        "BMI": ["bmi", "孕妇BMI"],
         "age": ["age", "年龄"],
-        "height": ["height", "ht", "身高"],
-        "weight": ["weight", "wt", "体重"],
-        "IVF": ["ivf", "ivf妊娠", "IVF妊娠", "in_vitro", "IVF"],
-        "GC_content": ["gc_content", "gc含量", "GC含量", "gc%", "GC含量", "GC含量"],
-        "alignment_rate": ["alignment_rate", "alignment", "alignment rate", "对齐率", "在参考基因组上比对的比例"],
+        "height": ["height", "身高"],
+        "weight": ["weight",  "体重"],
+        "IVF": ["ivf", "IVF妊娠"],
+        "GC_content": ["gc_content", "GC含量"],
+        "alignment_rate": ["alignment_rate", "在参考基因组上比对的比例"],
         "Y_frac": ["y_frac", "y_fraction", "Y染色体浓度", "Y染色体的Z值", "Y染色体的Z值", "Y染色体浓度"],
         "GA_lower": ["ga_lower", "gestational_age_lower", "GA_lower", "孕周_lower", "检测孕周", "检测孕周"],
         "GA_upper": ["ga_upper", "gestational_age_upper", "GA_upper", "孕周_upper", "GA上限"],
