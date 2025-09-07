@@ -266,8 +266,10 @@ def export_gender_data(df_male_processed, df_female_processed):
     # 确保输出目录存在
     ensure_dir_exists(OUTPUT_DIR)
     
-    male_output = os.path.join(OUTPUT_DIR, "processed_male.csv")
-    female_output = os.path.join(OUTPUT_DIR, "processed_female.csv")
+    # 将CSV文件导出
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    male_output = os.path.join(current_dir, "processed_male.csv")
+    female_output = os.path.join(current_dir, "processed_female.csv")
     
     # 导出男胎数据
     df_male_processed.to_csv(male_output, index=False)
