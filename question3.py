@@ -1,3 +1,10 @@
+# 方法框架总览（简要）
+# 本脚本实现“BMA-GMM-Joint-NSGA-II”四步框架，用于在“高风险-高达标率-低误差敏感”三维目标间取得均衡：
+# 1) BMA: 通过BIC加权近似计算每个候选协变量的PIP，保留PIP>阈值的变量；
+# 2) GMM: 对保留变量执行软聚类（BIC选择簇数），得到簇归属与概率；
+# 3) Joint (两步近似): 先拟合纵向模型得到浓度预测，再在AFT中引入预测作为时变协变量；
+# 4) NSGA-II: 在多目标（风险↓、达标率↑、误差敏感↓）下搜索Pareto前沿，给出临床可选解。
+
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,30 +24,20 @@ from pymoo.operators.sampling.rnd import FloatRandomSampling
 import scipy.stats as stats
 import warnings
 import statsmodels.api as sm
-import os  # 添加os模块导入
-
+import os
 warnings.filterwarnings('ignore')
 
-# 创建输出文件夹
+# 定义输出目录
 OUT_DIR = "./output_q3"
 if not os.path.exists(OUT_DIR):
     os.makedirs(OUT_DIR)
-
-# 方法框架总览（简要）
-# 本脚本实现“BMA-GMM-Joint-NSGA-II”四步框架，用于在“高风险-高达标率-低误差敏感”三维目标间取得均衡：
-# 1) BMA: 通过BIC加权近似计算每个候选协变量的PIP，保留PIP>阈值的变量；
-# 2) GMM: 对保留变量执行软聚类（BIC选择簇数），得到簇归属与概率；
-# 3) Joint (两步近似): 先拟合纵向模型得到浓度预测，再在AFT中引入预测作为时变协变量；
-# 4) NSGA-II: 在多目标（风险↓、达标率↑、误差敏感↓）下搜索Pareto前沿，给出临床可选解。
-# 备注：脚本提供三级落地策略（1. 多变量AFT基准；2. 两步近似Joint（已实现）；3. 完整Joint（jmbayes2或R实现，留作加分））。
 
 # 设置随机种子，保证结果可复现
 np.random.seed(42)
 plt.rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体
 plt.rcParams['axes.unicode_minus'] = False    # 正常显示负号
 # --------------------------
-# 1. 数据读取与预处理
-# 从CSV文件读取数据（替换为实际数据路径）
+# 数据读取与预处理，从CSV文件读取数据
 # --------------------------
 def load_and_preprocess_data(file_path):
     """读取CSV并做列名自动映射、缺失值处理和标准化（支持中/英列名）。
@@ -161,7 +158,7 @@ def load_and_preprocess_data(file_path):
         df[col] = df[col].str.replace(r'[^\d\.\-eE]+', '', regex=True)
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    # --- 新增：清洗 GA_lower / GA_upper（将诸如 "26.0(孕周异常)" 转为 26.0） ---
+    # --- 新增：清洗 GA_lower / GA_upper ---
     for ga_col in ["GA_lower", "GA_upper"]:
         if ga_col in df.columns:
             df[ga_col] = df[ga_col].astype(str).str.strip()
@@ -220,7 +217,7 @@ print(f"预处理后的数据形状: {processed_data.shape}")
 print(f"前5行数据:\n{processed_data.head()}")
 
 # --------------------------
-# 1.5. 绘制变量间的相关性热力图
+# 绘制变量间的相关性热力图
 # --------------------------
 def plot_correlation_heatmap(df, save_path=None):
     """绘制所有数值变量间的相关性热力图，使用原始列名"""
@@ -332,7 +329,7 @@ def plot_correlation_heatmap(df, save_path=None):
 correlation_matrix = plot_correlation_heatmap(processed_data)
 
 # --------------------------
-# 2. 贝叶斯模型平均(BMA)特征选择
+# 贝叶斯模型平均(BMA)特征选择
 # --------------------------
 def bma_feature_selection(df, target_col="Y_frac", n_models=200, threshold=0.5, max_subset_size=None):
     """基于BIC加权的近似BMA：
@@ -412,7 +409,7 @@ def bma_feature_selection(df, target_col="Y_frac", n_models=200, threshold=0.5, 
 selected_features, pip_results = bma_feature_selection(processed_data)
 
 # --------------------------
-# 3. 高斯混合模型(GMM)聚类
+#  高斯混合模型(GMM)聚类
 # --------------------------
 def gmm_clustering(df, features, max_k=5):
     """使用GMM进行软聚类，基于BIC选择最佳簇数"""
@@ -452,7 +449,7 @@ def gmm_clustering(df, features, max_k=5):
 data_with_clusters, gmm_model = gmm_clustering(processed_data, selected_features)
 
 # --------------------------
-# 4. 多变量AFT模型 (层级1)
+#  多变量AFT模型 (层级1)
 # --------------------------
 def fit_multivariate_aft(df):
     """拟合多变量区间删失AFT模型（兼容不同 lifelines 版本）"""
@@ -509,7 +506,7 @@ def fit_multivariate_aft(df):
 aft_model = fit_multivariate_aft(data_with_clusters)
 
 # --------------------------
-# 5. 两步近似联合模型 (层级2)
+#  两步近似联合模型 (层级2)
 # --------------------------
 def two_step_joint_model(df):
     """两步近似联合模型: 先拟合纵向模型，再将预测值代入AFT模型（兼容不同 lifelines 版本）"""
@@ -572,7 +569,7 @@ def two_step_joint_model(df):
 # 拟合两步近似联合模型
 long_model, joint_model, data_with_joint = two_step_joint_model(data_with_clusters)
 
-# ---------- 可行性诊断（插入位置：在 two_step_joint_model 返回后，minimize 前） ----------
+# ---------- 可行性诊断（） ----------
 class NIPTProblem(Problem):
     """定义多目标优化问题，支持可配置 success/fnr 阈值与放宽策略"""
     def __init__(self, model, data, cluster_id, success_thresh=0.9, fnr_thresh=0.05, enforce_constraints=True):
@@ -632,7 +629,7 @@ class NIPTProblem(Problem):
         out["F"] = np.column_stack([risk, success_obj, error_sens])
         out["G"] = np.column_stack([constr1, constr2, constr3])
 
-# ---------- 可行性诊断（移动到此处，NIPTProblem 已定义） ----------
+# ---------- 可行性诊断 ----------
 def diagnostic_feasibility(model, data, cluster_id, t_grid=None, success_thresh=0.9, fnr_thresh=0.05):
     prob = NIPTProblem(model, data, cluster_id)
     if t_grid is None:
@@ -669,65 +666,6 @@ for cid in [0, data_with_clusters['cluster'].value_counts().idxmax()]:
 # --------------------------
 # 6. 多目标优化 (NSGA-II)
 # --------------------------
-class NIPTProblem(Problem):
-    """定义多目标优化问题，支持可配置 success/fnr 阈值与放宽策略"""
-    
-    def __init__(self, model, data, cluster_id, success_thresh=0.9, fnr_thresh=0.05, enforce_constraints=True):
-        super().__init__(n_var=1, n_obj=3, n_constr=3, xl=[10], xu=[25])
-        self.model = model
-        self.data = data[data['cluster'] == cluster_id].copy()
-        self.cluster_id = cluster_id
-        self.success_thresh = success_thresh
-        self.fnr_thresh = fnr_thresh
-        self.enforce_constraints = enforce_constraints
-
-    def calculate_risk(self, t):
-        return np.mean(np.abs(self.data['GA_lower'] - t) / self.data['GA_lower'])
-
-    def calculate_success_rate(self, t):
-        sel = self.data[self.data['GA_lower'] <= t]
-        return np.mean(sel['Y_frac'] > 0.04) if sel.shape[0] > 0 else 0.0
-
-    def calculate_error_sensitivity(self, t):
-        sel = self.data[self.data['GA_lower'] <= t]
-        return np.std(sel['Y_frac']) if sel.shape[0] > 0 else 0.0
-
-    def calculate_fnr(self, t):
-        positive_cases = self.data[self.data['Y_frac'] > 0.04]
-        if positive_cases.shape[0] == 0:
-            return 0.0
-        fn = positive_cases[positive_cases['GA_lower'] > t].shape[0]
-        return fn / positive_cases.shape[0]
-
-    def grid_feasible(self, t_grid=None):
-        """在网格上检查是否存在满足当前阈值的可行 t"""
-        if t_grid is None:
-            t_grid = np.linspace(10, 25, 151)
-        for t in t_grid:
-            sr = self.calculate_success_rate(float(t))
-            fnr = self.calculate_fnr(float(t))
-            if (sr >= self.success_thresh) and (fnr <= self.fnr_thresh):
-                return True
-        return False
-
-    def _evaluate(self, X, out, *args, **kwargs):
-        risk = np.array([self.calculate_risk(t[0]) for t in X])
-        success_rate = np.array([self.calculate_success_rate(t[0]) for t in X])
-        success_obj = 1 - success_rate
-        error_sens = np.array([self.calculate_error_sensitivity(t[0]) for t in X])
-
-        # 若 enforce_constraints 为 True，则输出约束，否则输出空约束（均为满足）
-        if self.enforce_constraints:
-            constr1 = self.success_thresh - success_rate  # >=0 表示满足
-            fnr = np.array([self.calculate_fnr(t[0]) for t in X])
-            constr2 = fnr - self.fnr_thresh  # <=0 表示满足
-        else:
-            constr1 = np.full_like(success_rate, -1.0)  # 恒满足
-            constr2 = np.full_like(success_rate, -1.0)
-
-        constr3 = np.zeros_like(X[:, 0])
-        out["F"] = np.column_stack([risk, success_obj, error_sens])
-        out["G"] = np.column_stack([constr1, constr2, constr3])
 
 # ---------- 使用诊断结果决定优化设置 ----------
 # 先尝试严格阈值
@@ -880,7 +818,6 @@ def plot_pareto_2d_projection(res=None, df_check=None, cluster_id=None):
         print(f"{key_labels[i]}: 孕周={df_check['t'][idx]:.1f}w, 风险={risk[idx]:.4f}, "
               f"达标率={success_rate[idx]:.4f}, 误差敏感性={error_sens[idx]:.4f}")
 
-# 使用示例（放在代码末尾，诊断和优化后面）
 # 为每个聚类分别生成可视化
 for cid in [0, 1]:
     print(f"\n--- 聚类 {cid} 的Pareto前沿可视化 ---")

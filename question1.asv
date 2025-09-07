@@ -2,7 +2,7 @@
 % 用线性混合效应模型 + 样条基实现近似 GAMM
 % 用 mgcv::gam 得到最终结果
 
-%% 0. 配置
+%% 
 % 导入预处理后的男胎儿数据，保留原始中文列名
 T = readtable('./processed_male.csv', 'VariableNamingRule','preserve');
 tbl = T;
@@ -503,8 +503,7 @@ scatter(tbl.gestational_weeks, tbl.BMI, 8, 'w', 'filled', 'MarkerFaceAlpha', 0.1
 saveas(gcf, fullfile(VIS_DIR, 'problem1_interaction_pd.png'));
 close(gcf);
 
-%% 9. 辅助函数
-%  将任意单元格项转换为字符串以便写入 CSV
+%% 9. 辅助函数：将任意单元格项转换为字符串以便写入 CSV
 function s = toStringForCSV(x)
     if isempty(x)
         s = '';

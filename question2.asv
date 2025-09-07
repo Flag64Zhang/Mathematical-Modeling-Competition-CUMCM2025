@@ -14,7 +14,7 @@
 
 clear; close all; clc;
 
-%%  0. 配置 
+%% ---------- 配置 ----------
 DATA_PATH = "processed_male.csv";        % <-- 文件路径 (.csv 或 .xlsx)
 USE_XLSX = false;              % 如果用 .xlsx 且路径为 .xlsx，则设为 true，增加程序鲁棒性
 THRESH = 0.04;                 % 4% 达标阈值（0-1）
@@ -33,7 +33,7 @@ rscriptExe = fullfile(R_BIN_DIR, 'Rscript.exe');
 
 T = readtable(DATA_PATH);
 
-% 映射中文列名到标准列名
+%% 映射中文列名到标准列名
 varMap = containers.Map( ...
     {'孕妇代码','检测孕周','Y染色体浓度','孕妇BMI'}, ...
     {'patient_id','gestational_weeks','Y_frac','BMI'} ...
@@ -46,7 +46,7 @@ for i = 1:numel(T.Properties.VariableNames)
     end
 end
 
-%% 1. 读取数据
+%% ---------- 读取数据 ----------
 fprintf("Reading data from %s\n", DATA_PATH);
 if USE_XLSX
     T = readtable(DATA_PATH, 'FileType','spreadsheet', 'VariableNamingRule','preserve');
@@ -106,7 +106,7 @@ if max(T.Y_frac) > 1.05
     T.Y_frac = T.Y_frac / 100;
 end
 
-%% 2. 构建区间删失 (L,R] 
+%% ---------- 4.1 构建区间删失 (L,R] ----------
 fprintf("正在构建患者级区间 (L,R] ...\n");
 uids = unique(T.patient_id);
 nP = length(uids);
@@ -151,7 +151,7 @@ rows = rows(~isnan(rows.BMI), :);
 
 writetable(rows, fullfile(OUT_DIR,'intervals.csv'));
 
-%% 3. 三重敏感性 mid/low/up 数据集 
+%% ---------- 4.1.2 三重敏感性 mid/low/up 数据集 ----------
 fprintf("正在生成 mid/low/up 数据集 ...\n");
 mid = table(); low = table(); up = table();
 for i=1:height(rows)
@@ -181,7 +181,7 @@ writetable(mid, fullfile(OUT_DIR,'GA_midpoint.csv'));
 writetable(low, fullfile(OUT_DIR,'GA_low.csv'));
 writetable(up, fullfile(OUT_DIR,'GA_up.csv'));
 
-%%  4. 三重敏感性分析，调用 R (survreg) 
+%% ---------- 4.1.2 三重敏感性分析，调用 R (survreg) ----------
 % 准备传递给 R 的输入：列出 mid/low/up CSV，列为 patient_id,T,event,BMI
 fprintf("调用 R 拟合 mid/low/up 的对数正态AFT模型 (survreg) ...\n");
 rInputMid = fullfile(OUT_DIR,'GA_midpoint.csv');
@@ -211,7 +211,7 @@ catch
     warning('无法加载部分 R 输出文件，将使用可用数据继续。');
 end
 
-%%  5. 风险函数定义 
+%% ---------- 4.2 风险函数定义 ----------
 fprintf("准备 IC-AFT (R 输出) 的生存预测函数（改进版本）...\n");
 % 策略：
 % - 如果 icenreg_out 可用：其中包含多个 BMI 水平的 tgrid 生存率 S(t)
@@ -305,7 +305,7 @@ risk_fun = @(t, Sval) debug_risk_fun_anon(t, Sval, W);
 
 fprintf('风险函数定义完成\n');
 
-%%  6. 聚类辅助 & DP 分箱 
+%% ---------- 4.3 聚类辅助 & DP 分箱 ----------
 fprintf("对 (BMI, Tmid) 做 GMM 聚类以获得初步分组 ...\n");
 % 对 sets.mid 的 {BMI, T} 做 GMM
 BMI_T = [mid.BMI, mid.T];
@@ -348,7 +348,7 @@ end
 rows.group = groupAssign;
 writetable(rows, fullfile(OUT_DIR,'GA_intervals_with_groups.csv'));
 
-% DP 分箱（按 BMI 排序，最小化组内 Tmid 方差）
+% ---------- DP 分箱（按 BMI 排序，最小化组内 Tmid 方差） ----------
 fprintf("正在对 BMI 做 DP 最优一维分箱 (k=%d) ...\n", K_BINS);
 % 准备数组（用 mid.T 作为目标）
 valid = ~isnan(mid.BMI) & ~isnan(mid.T);
@@ -447,8 +447,8 @@ for i=1:height(rows)
 end
 writetable(rows, fullfile(OUT_DIR,'GA_intervals_DPgroups.csv'));
 
-%% 7. 每组最优时点搜索
-fprintf("正在为每个 BMI 组搜索最优 t*...\n");
+%% ---------- 4.4 每组最优时点搜索（修复版本） ----------
+fprintf("正在为每个 BMI 组搜索最优 t*（改进版本）...\n");
 groups = unique(rows.BMI_group);
 group_summary = table('Size',[numel(groups),5], 'VariableTypes',{'double','double','double','double','double'}, ...
     'VariableNames',{'BMI_group','BMI_center','t_star','reach_prob','min_risk'});
@@ -469,7 +469,7 @@ for g = groups'
     bmi_center = double(mean(rows.BMI(mask),'omitnan'));
     fprintf('处理BMI组 %d，中心值 %.2f，样本数 %d\n', g, bmi_center, sum(mask));
     
-    % 尝试使用IC-AFT模型
+    % 方法1：尝试使用IC-AFT模型
     success = false;
     if ~isempty(icen) && ~isempty(icen.Sfun)
         try
@@ -494,7 +494,7 @@ for g = groups'
         end
     end
     
-    % 如果IC-AFT失败，使用Kaplan-Meier估计
+    % 方法2：如果IC-AFT失败，使用Kaplan-Meier估计
     if ~success
         fprintf('  回退到Kaplan-Meier估计...\n');
         try
@@ -620,7 +620,7 @@ end
 writetable(group_summary, fullfile(OUT_DIR,'group_table.csv'));
 fprintf('最优时点搜索完成，结果已保存\n');
 
-%% 8. Bootstrap 抽样 
+%% ---------- 4.4 Bootstrap 抽样 ----------
 fprintf("Bootstrap 抽样（B=%d）以估计 t* 的置信区间 ...\n", BOOT_B);
 % 在 parfor 中写入必须是按循环切片的可切片变量，因此用矩阵存放每次迭代结果
 nGroups = height(group_summary);
@@ -763,7 +763,7 @@ end
 results_with_bootstrap = [group_summary, boot_summary];
 writetable(results_with_bootstrap, fullfile(OUT_DIR,'group_table_with_bootstrap.csv'));
 
-%% 9. Monte Carlo 误差分析
+%% ---------- 4.5 Monte Carlo 误差分析 ----------
 fprintf("正在运行 Monte Carlo 仿真 (B=%d) ...\n", MC_B);
 mc_tstars = zeros(MC_B,1);
 
@@ -940,7 +940,7 @@ delete(fullfile(OUT_DIR, 'icenreg_boot_out_*.csv'));
 delete(fullfile(OUT_DIR, 'icenreg_mc_out_*.csv'));
 
 
-%% 10. 生成最终BMI分组表 
+%% ---------- 5. 生成最终BMI分组表 ----------
 fprintf("\n正在生成最终BMI分组临床参考表...\n");
 
 % 设置中文表格路径
@@ -955,7 +955,7 @@ catch
     fprintf("使用内存中的区间数据\n");
 end
 
-% 计算每组样本数
+%% 计算每组样本数
 fprintf("计算每组样本数...\n");
 group_ids = unique(results_with_bootstrap.BMI_group);
 sample_counts = zeros(size(group_ids));
@@ -965,7 +965,7 @@ for i = 1:length(group_ids)
     sample_counts(i) = sum(interval_data.BMI_group == g);
 end
 
-% 计算BMI区间
+%% 计算BMI区间
 fprintf("计算BMI区间...\n");
 bmi_ranges = cell(length(group_ids), 1);
 
@@ -1002,10 +1002,10 @@ for i = 1:length(group_ids)
     end
 end
 
-% 创建中文表格
+%% 创建中文表格
 fprintf("创建中文BMI分组表...\n");
 
-% 直接使用中文列名初始化表格
+% 初始化表格（直接使用中文列名）- 删除不需要的列，增加期望风险列
 var_names = {'BMI组', 'BMI范围', '样本数', '推荐孕周', '达标率(%)', '期望风险(周)'};
 
 var_types = {'double', 'string', 'double', 'double', 'double', 'double'};
@@ -1036,7 +1036,7 @@ for i = 1:length(group_ids)
     final_table_cn{i, '期望风险(周)'} = expected_risk_weeks;
 end
 
-% 保存表格并显示
+%% 保存表格并显示
 fprintf("保存中文BMI分组表到 %s...\n", FINAL_TABLE_PATH);
 writetable(final_table_cn, FINAL_TABLE_PATH);
 disp(final_table_cn);
@@ -1044,7 +1044,7 @@ fprintf("中文BMI分组临床参考表已保存到: %s\n", FINAL_TABLE_PATH);
 
 fprintf('\n全部分析完成!\n');
 
-%% 11. 辅助函数
+%% ========== 局部函数定义 ==========
 
 function result = improved_interp_anon(X, Y, V, xi, yi)
     % 改进的插值函数，增加边界处理

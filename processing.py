@@ -5,7 +5,7 @@ import warnings
 warnings.filterwarnings('ignore')
 import matplotlib.pyplot as plt
 import seaborn as sns
-import os  # 添加os模块以处理目录
+import os
 from sklearn.impute import KNNImputer
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
@@ -28,7 +28,7 @@ def ensure_dir_exists(directory):
 # 0. 工具函数（适配男/女胎数据）
 # --------------------------
 def to_date_str(date_str):
-    """将日期字符串转换为标准日期格式（如2023-6-15），支持常见日期格式"""
+    """将日期字符串转换为标准日期格式（如2023/6/15），支持常见日期格式"""
     if pd.isna(date_str):
         return np.nan
     try:
@@ -72,7 +72,7 @@ def remove_duplicates(df):
 
 def handle_duplicate_patients(df):
     """
-    2.1.2 重复数据处理
+    重复数据处理
     按孕妇唯一标识码（B列）和检测时间（H列）排序，
     同一孕周多次检测的加权平均整合（基于唯一比对读段数和总读段数的乘积作为权重）
     """
@@ -110,7 +110,7 @@ def handle_duplicate_patients(df):
         total_reads_col = '原始测序数据的总读段数'
     
     if not all([patient_id_col, week_col]):
-        print("警告：缺少必要的列（患者ID或孕周），跳过重复数据处理")
+        print("缺少必要的列（患者ID或孕周），跳过重复数据处理")
         return df
     
     # 简化处理：直接按患者ID和孕周去重，避免复杂的排序问题
@@ -158,9 +158,6 @@ def handle_duplicate_patients(df):
 def visualize_missing_distribution(df, title="缺失值分布", save=True, filename=None):
     """
     可视化缺失值分布（热力图），便于快速发现缺失模式
-    参数:
-        save: 是否保存图像（True）或显示图像（False）
-        filename: 保存的文件名（不含路径）
     """
     plt.rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体
     plt.rcParams['axes.unicode_minus'] = False    # 正常显示负号
@@ -191,10 +188,10 @@ def visualize_missing_distribution(df, title="缺失值分布", save=True, filen
 
 def advanced_missing_value_imputation(df, method='mice'):
     """
-    2.1.3 缺失值处理
-    实现多重插补（MICE）或 KNN、梯度提升等高级插补方法
+    缺失值处理
+    实现多重插补（MICE）与 KNN、梯度提升等插补方法
     """
-    print(f"开始使用{method.upper()}方法进行高级缺失值插补...")
+    print(f"开始使用{method.upper()}方法进行缺失值插补...")
     
     # 选择数值列进行插补
     numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -294,7 +291,7 @@ def advanced_missing_value_imputation(df, method='mice'):
 
 def create_interaction_features(df):
     """
-    2.2.2 特征工程扩展
+    特征工程扩展
     创建交互项（如"孕周×BMI""Z值×GC含量"）和多项式特征（如"孕周²""BMI²"）
     """
     print("开始创建交互项和多项式特征...")
@@ -417,7 +414,7 @@ def create_derived_features(df):
 
 def validate_bmi(df):
     """
-    2.3.1 BMI验证
+    BMI验证
     基于身高（D列）和体重（E列）重新计算BMI并与原始BMI（K列）进行交叉验证，
     设置差异阈值（如15%）进行异常标记
     """
@@ -486,7 +483,7 @@ def validate_bmi(df):
 
 def sequencing_quality_control(df):
     """
-    2.3.2 测序质量控制
+    测序质量控制
     将13/18/21号染色体的GC含量（X/Y/Z列）、读段过滤比例（AA列）、重复率（N列）等指标作为协变量纳入模型
     """
     print("开始测序质量控制...")
@@ -620,12 +617,11 @@ def batch_effect_correction(df):
     return df_batch
 
 # --------------------------
-# 1. 分sheet读取原始数据（男/女胎数据）
+# 分sheet读取原始数据（男/女胎数据）
 # --------------------------
 def load_gender_specific_data(file_path):
     """
     分sheet读取男/女胎儿数据（sheet1=男胎，sheet2=女胎）
-    :return: 男胎DataFrame、女胎DataFrame
     """
     try:
         # 读取sheet1（男胎儿数据）
@@ -652,7 +648,7 @@ def load_gender_specific_data(file_path):
         raise
 
 # --------------------------
-# 2. 男胎儿数据专属预处理（服务问题1-3）
+# 男胎儿数据专属预处理（服务问题1-3）
 # --------------------------
 
 def preprocess_male_data(df_male):
@@ -663,7 +659,7 @@ def preprocess_male_data(df_male):
     print("开始男胎儿数据预处理...")
     df = df_male.copy()
     
-    # 2.1.2 重复数据处理
+    # 重复数据处理
     df = handle_duplicate_patients(df)
     
     # 日期列转换为标准日期字符串
@@ -684,7 +680,7 @@ def preprocess_male_data(df_male):
     raw_reads_col = '原始读段数' if '原始读段数' in df.columns else '原始测序数据的总读段数'
     uniq_reads_col = '唯一比对的读段数'
     if raw_reads_col in df.columns and uniq_reads_col in df.columns:
-        # 剔除原始读段数过低（如小于0.7，实际应为比例或绝对值，按你的描述这里按比例处理）
+        # 剔除原始读段数过低（如小于0.7，实际应为比例或绝对值，按建模方案这里按比例处理）
         raw_reads_numeric = pd.to_numeric(df[raw_reads_col], errors='coerce')
         df = df[raw_reads_numeric >= 0.7]
         # 剔除唯一比对质量差（唯一比对读段数/原始读段数 < 0.6）
@@ -727,20 +723,20 @@ def preprocess_male_data(df_male):
         abnormal_gc_mask = (gc_numeric < 0.4) | (gc_numeric > 0.6)  # 小数形式（40%=0.4）
         df.loc[abnormal_gc_mask, 'GC含量'] = df.loc[abnormal_gc_mask, 'GC含量'].astype(str) + "(GC异常)"
     
-    # 2.1.3 高级缺失值处理
+    # 高级缺失值处理
     print("开始高级缺失值插补...")
     df = advanced_missing_value_imputation(df, method='mice')
-    
-    # 2.2.2 特征工程扩展
+
+    # 特征工程扩展
     print("开始特征工程...")
     df = create_interaction_features(df)
     df = create_derived_features(df)
-    
-    # 2.3.1 BMI验证
+
+    # BMI验证
     print("开始BMI验证...")
     df = validate_bmi(df)
-    
-    # 2.3.2 测序质量控制
+
+    # 测序质量控制
     print("开始测序质量控制...")
     df = sequencing_quality_control(df)
     
@@ -752,7 +748,7 @@ def preprocess_male_data(df_male):
     return df
 
 # --------------------------
-# 3. 女胎儿数据专属预处理（服务问题4）
+# 女胎儿数据专属预处理（服务问题4）
 # --------------------------
 def preprocess_female_data(df_female):
     """
@@ -762,7 +758,7 @@ def preprocess_female_data(df_female):
     print("开始女胎儿数据预处理...")
     df = df_female.copy()
     
-    # 2.1.2 重复数据处理
+    # 重复数据处理
     df = handle_duplicate_patients(df)
     
     # 日期列转换为标准日期字符串
@@ -787,12 +783,12 @@ def preprocess_female_data(df_female):
                       '18号染色体的Z值', '21号染色体的Z值', '染色体的非整倍体',
                       '13号染色体的GC含量', '18号染色体的GC含量', '21号染色体的GC含量']
     
-    # 3.1 缺失值处理
+    # 缺失值处理
     for col in female_key_cols:
         if col in df.columns:
             df[col] = df[col].fillna("待补充")
     
-    # 3.2 异常值处理
+    # 异常值处理
     if 'X染色体浓度' in df.columns:
         x_conc_numeric = pd.to_numeric(df['X染色体浓度'], errors='coerce')
         abnormal_x_mask = (x_conc_numeric < -5) | (x_conc_numeric > 10)
@@ -806,20 +802,20 @@ def preprocess_female_data(df_female):
     if '染色体的非整倍体' in df.columns:
         df['染色体的非整倍体'] = df['染色体的非整倍体'].fillna("无异常")
 
-    # 2.1.3 高级缺失值处理
+    # 高级缺失值处理
     print("开始高级缺失值插补...")
     df = advanced_missing_value_imputation(df, method='mice')
     
-    # 2.2.2 特征工程扩展
+    # 特征工程扩展
     print("开始特征工程...")
     df = create_interaction_features(df)
     df = create_derived_features(df)
     
-    # 2.3.1 BMI验证
+    # BMI验证
     print("开始BMI验证...")
     df = validate_bmi(df)
     
-    # 2.3.2 测序质量控制
+    # 测序质量控制
     print("开始测序质量控制...")
     df = sequencing_quality_control(df)
     
@@ -831,7 +827,7 @@ def preprocess_female_data(df_female):
     return df
 
 # --------------------------
-# 4. 分群体导出结果（保留原列名与列数）
+# 分群体导出结果（保留原列名与列数）
 # --------------------------
 def export_gender_data(df_male_processed, df_female_processed):
     """

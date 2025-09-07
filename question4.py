@@ -14,6 +14,7 @@ import shap
 import pickle
 import os
 from sklearn.inspection import partial_dependence
+
 try:
     # 尝试导入新API
     from sklearn.inspection import PartialDependenceDisplay
@@ -37,6 +38,7 @@ if not os.path.exists(VIS_DIR):  # 确保可视化目录存在
 SEED = 42
 np.random.seed(SEED)
 
+
 # 添加设置中文字体的函数
 def set_chinese_font():
     """设置中文字体，根据不同操作系统选择合适的字体"""
@@ -45,9 +47,9 @@ def set_chinese_font():
     import platform
     from matplotlib import rcParams
     import matplotlib.font_manager as fm
-    
+
     system = platform.system()
-    
+
     # 根据操作系统选择默认字体
     if system == 'Windows':
         font_list = ['SimHei', 'Microsoft YaHei', 'SimSun', 'FangSong']
@@ -55,19 +57,19 @@ def set_chinese_font():
         font_list = ['Heiti TC', 'PingFang SC', 'STHeiti']
     else:  # Linux等
         font_list = ['WenQuanYi Micro Hei', 'WenQuanYi Zen Hei', 'Droid Sans Fallback']
-    
+
     # 添加更多可能的字体作为备选
     font_list.extend(['Arial Unicode MS', 'DejaVu Sans'])
-    
+
     # 查找系统中第一个可用的字体
     chinese_font = None
     available_fonts = [f.name for f in fm.fontManager.ttflist]
-    
+
     for font in font_list:
         if font in available_fonts:
             chinese_font = font
             break
-    
+
     if chinese_font:
         print(f"使用中文字体: {chinese_font}")
         # 设置字体
@@ -80,7 +82,7 @@ def set_chinese_font():
             from pathlib import Path
             mpl_path = Path(mpl.__file__).parent
             font_files = list(mpl_path.glob('mpl-data/fonts/ttf/*'))
-            
+
             # 尝试找到适合中文显示的字体
             for font_file in font_files:
                 if 'noto' in font_file.name.lower() or 'droid' in font_file.name.lower():
@@ -89,14 +91,14 @@ def set_chinese_font():
                     break
         except Exception as e:
             print(f"加载内置字体失败: {e}")
-    
-    # 确保能显示负号 - 更强制地设置
+
+    # 确保能显示负号
     plt.rcParams['axes.unicode_minus'] = False
-    mpl.rcParams['axes.unicode_minus'] = False  # 同时设置matplotlib模块级别的参数
-    
+    mpl.rcParams['axes.unicode_minus'] = False
+
     # 尝试使用更强大的配置
     rcParams['font.family'] = 'sans-serif'
-    
+
     # 为shap模块设置特定配置
     try:
         import shap.plots as shap_plots
@@ -105,11 +107,13 @@ def set_chinese_font():
             shap_plots._waterfall.rcParams['axes.unicode_minus'] = False
     except:
         pass
-    
+
     return chinese_font is not None
+
 
 # 在初始化时调用字体设置函数
 set_chinese_font()
+
 
 class FemaleFetalModel:
     def __init__(self, data_path=None):
@@ -127,7 +131,7 @@ class FemaleFetalModel:
         self.best_threshold = 0.065  # 默认阈值
         self.feature_names = ['21-Z', '18-Z', '13-Z', 'GC异常标志', '读段数', 'BMI', '孕周']
 
-        # 如果提供了数据路径，加载数据
+        # 加载数据
         if data_path:
             self.load_data(data_path)
 
@@ -137,11 +141,9 @@ class FemaleFetalModel:
             self.data = pd.read_csv(data_path)
             print(f"成功加载数据，共 {self.data.shape[0]} 样本，{self.data.shape[1]} 特征")
 
-            # 尝试列名映射
             # 常见列名映射到标准名称
             column_mapping = {
-                # 原列名 -> 模型期望的列名
-                '21-Z标准差': '21-Z', 
+                '21-Z标准差': '21-Z',
                 '18-Z标准差': '18-Z',
                 '13-Z标准差': '13-Z',
                 'GC_abnormal': 'GC异常标志',
@@ -152,14 +154,14 @@ class FemaleFetalModel:
                 '检测孕周': '孕周',
                 '异常标志': 'AE'
             }
-            
+
             # 显示原始列名，帮助调试
             print("原始列名:", self.data.columns.tolist())
-            
+
             # 应用映射
-            self.data = self.data.rename(columns={k: v for k, v in column_mapping.items() 
-                                            if k in self.data.columns})
-            
+            self.data = self.data.rename(columns={k: v for k, v in column_mapping.items()
+                                                  if k in self.data.columns})
+
             # 检查必要的列是否存在
             required_columns = self.feature_names + ['AE']
             missing_cols = [col for col in required_columns if col not in self.data.columns]
@@ -185,7 +187,6 @@ class FemaleFetalModel:
             return False
 
         # 划分训练集和测试集（保持时间顺序的外部验证）
-        # 这里假设数据已经按时间排序，前70%作为训练集，后30%作为验证集
         train_size = int(len(self.data) * (1 - test_size))
         self.X_train, self.X_test = self.X.iloc[:train_size], self.X.iloc[train_size:]
         self.y_train, self.y_test = self.y.iloc[:train_size], self.y.iloc[train_size:]
@@ -224,7 +225,7 @@ class FemaleFetalModel:
                 'max_depth': 5,
                 'learning_rate': 0.1,
                 'n_estimators': 100,
-                'scale_pos_weight': 1,  # 由于已经使用SMOTE，这里设为1
+                'scale_pos_weight': 1,  # 由于使用SMOTE，设为1
                 'random_state': SEED
             }
 
@@ -250,16 +251,14 @@ class FemaleFetalModel:
             print(f"最佳交叉验证AUC: {grid_search.best_score_:.4f}")
             self.xgb_model = grid_search.best_estimator_
         else:
-            # 兼容不同版本的XGBoost - 最简单的方法，移除所有可能有问题的参数
             print("使用简化的XGBoost训练（无早停）")
             self.xgb_model = xgb.XGBClassifier(**params)
-            
+
             try:
-                # 最基础的fit调用，不使用任何额外参数
+                # fit调用
                 self.xgb_model.fit(self.X_train_resampled, self.y_train_resampled)
             except Exception as e:
                 print(f"XGBoost训练出错: {e}")
-                # 尝试回退到更简单的模型或参数
                 simple_params = {
                     'max_depth': 3,
                     'n_estimators': 50,
@@ -315,13 +314,12 @@ class FemaleFetalModel:
         else:
             print("使用简化的LightGBM训练（无早停）")
             self.lgb_model = lgb.LGBMClassifier(**params)
-            
+
             try:
-                # 最基础的fit调用，不使用任何额外参数
+                # fit调用
                 self.lgb_model.fit(self.X_train_resampled, self.y_train_resampled)
             except Exception as e:
                 print(f"LightGBM训练出错: {e}")
-                # 尝试回退到更简单的模型或参数
                 simple_params = {
                     'max_depth': 3,
                     'n_estimators': 50,
@@ -472,16 +470,15 @@ class FemaleFetalModel:
         results = []
         base_auc = roc_auc_score(self.y_test, self.xgb_model.predict_proba(self.X_test_scaled)[:, 1])
         base_sensitivity = recall_score(self.y_test, (
-                    self.xgb_model.predict_proba(self.X_test_scaled)[:, 1] >= self.best_threshold).astype(int))
+                self.xgb_model.predict_proba(self.X_test_scaled)[:, 1] >= self.best_threshold).astype(int))
         base_specificity = recall_score(self.y_test, (
-                    self.xgb_model.predict_proba(self.X_test_scaled)[:, 1] >= self.best_threshold).astype(int),
+                self.xgb_model.predict_proba(self.X_test_scaled)[:, 1] >= self.best_threshold).astype(int),
                                         pos_label=0)
 
         for threshold in np.arange(3.5, 4.6, 0.1):
             # 这里模拟男胎阈值变化对女胎模型的影响
-            # 实际应用中可能需要更复杂的模拟或数据调整
             y_pred_proba = self.xgb_model.predict_proba(self.X_test_scaled)[:, 1]
-            y_pred = (y_pred_proba >= self.best_threshold * (threshold / 4.0)).astype(int)  # 简单模拟阈值变化的影响
+            y_pred = (y_pred_proba >= self.best_threshold * (threshold / 4.0)).astype(int)
 
             auc = roc_auc_score(self.y_test, y_pred_proba)
             sensitivity = recall_score(self.y_test, y_pred)
@@ -637,12 +634,12 @@ class FemaleFetalModel:
     def explain_model(self, model=None, sample_index=None):
         """使用SHAP和部分依赖图解释模型"""
         import warnings
-        
+
         # 在函数内部临时禁用特定的NumPy RNG警告
-        warnings.filterwarnings("ignore", 
-                               message="The NumPy global RNG was seeded by calling `np.random.seed`", 
-                               category=FutureWarning)
-        
+        warnings.filterwarnings("ignore",
+                                message="The NumPy global RNG was seeded by calling `np.random.seed`",
+                                category=FutureWarning)
+
         if model is None:
             if self.xgb_model is not None:
                 model = self.xgb_model
@@ -652,11 +649,11 @@ class FemaleFetalModel:
 
         # 创建SHAP解释器
         explainer = shap.TreeExplainer(model)
-        
+
         # 解决负号显示问题 - 更全面的方法
         # 为数学表示找到更适合的字体
         import matplotlib.font_manager as fm
-        
+
         # 专门为SHAP瀑布图处理负号显示问题
         try:
             # 设置matplotlib rcParams，强制使用DejaVu Sans绘制数学符号
@@ -664,7 +661,7 @@ class FemaleFetalModel:
             plt.rcParams['mathtext.default'] = 'regular'
             # 确保负号显示正确
             plt.rcParams['axes.unicode_minus'] = False
-            
+
             # 修改SHAP的_waterfall模块设置
             import shap.plots as shap_plots
             if hasattr(shap_plots, '_waterfall'):
@@ -673,14 +670,14 @@ class FemaleFetalModel:
                     shap_plots._waterfall.rcParams['mathtext.fontset'] = 'stix'
         except Exception as e:
             print(f"设置SHAP负号字体时出错: {e}")
-        
-        # 绘制全局特征重要性 
-        plt.figure(figsize=(14, 10)) 
+
+        # 绘制全局特征重要性
+        plt.figure(figsize=(14, 10))
         shap_values = explainer.shap_values(self.X_test_scaled)
-        
+
         # 使用上下文管理器来临时设置随机种子
         import contextlib
-        
+
         @contextlib.contextmanager
         def temp_seed(seed):
             """临时设置NumPy随机种子的上下文管理器"""
@@ -690,13 +687,13 @@ class FemaleFetalModel:
                 yield
             finally:
                 np.random.set_state(state)
-        
+
         # 绘制SHAP图表
         with temp_seed(42):
-            shap.summary_plot(shap_values, self.X_test_scaled, 
-                             feature_names=self.feature_names,
-                             plot_type="bar", show=False)
-        
+            shap.summary_plot(shap_values, self.X_test_scaled,
+                              feature_names=self.feature_names,
+                              plot_type="bar", show=False)
+
         plt.title("SHAP全局特征重要性", fontsize=14)  # 增加字体大小
         # 修改保存路径
         plt.savefig(os.path.join(VIS_DIR, 'shap_global_importance.png'), bbox_inches='tight', dpi=300)
@@ -704,12 +701,12 @@ class FemaleFetalModel:
 
         # 绘制蜂群图 - 增加图形尺寸，特别是宽度
         plt.figure(figsize=(16, 12))  # 从(10, 6)改为(16, 12)
-        
+
         with temp_seed(42):
-            shap.summary_plot(shap_values, self.X_test_scaled, 
-                             feature_names=self.feature_names, 
-                             show=False)
-        
+            shap.summary_plot(shap_values, self.X_test_scaled,
+                              feature_names=self.feature_names,
+                              show=False)
+
         plt.title("SHAP特征影响蜂群图", fontsize=16, pad=20)  # 增加字体大小和顶部填充
         # 修改保存路径，添加bbox_inches参数确保完整显示
         plt.savefig(os.path.join(VIS_DIR, 'shap_beeswarm.png'), bbox_inches='tight', dpi=300)
@@ -723,9 +720,9 @@ class FemaleFetalModel:
 
         # 使用新版API绘制部分依赖图
         fig, ax = plt.subplots(figsize=(10, 6))
-        
+
         try:
-            # 尝试使用新版API
+            # 使用新版API
             if 'PartialDependenceDisplay' in globals():
                 # 如果已成功导入PartialDependenceDisplay
                 pdp = partial_dependence(model, self.X_train_scaled, [top_feature_idx], kind='average')
@@ -735,20 +732,20 @@ class FemaleFetalModel:
                 )
             else:
                 # 手动绘制部分依赖图
-                pdp_result = partial_dependence(model, self.X_train_scaled, 
-                                               features=[top_feature_idx])
-                
+                pdp_result = partial_dependence(model, self.X_train_scaled,
+                                                features=[top_feature_idx])
+
                 pdp_values = pdp_result["average"]
                 pdp_feature_values = pdp_result["values"][0]
-                
+
                 ax.plot(pdp_feature_values, pdp_values[0])
                 ax.set_xlabel(self.feature_names[top_feature_idx])
                 ax.set_ylabel('Partial Dependence')
         except Exception as e:
             print(f"部分依赖图绘制失败: {e}")
-            ax.text(0.5, 0.5, f"部分依赖图无法绘制: {e}", 
-                   ha='center', va='center', transform=ax.transAxes)
-        
+            ax.text(0.5, 0.5, f"部分依赖图无法绘制: {e}",
+                    ha='center', va='center', transform=ax.transAxes)
+
         plt.title(f"{top_feature_name}的部分依赖图")
         # 修改保存路径
         plt.savefig(os.path.join(VIS_DIR, f'pdp_{top_feature_name}.png'))
@@ -761,10 +758,10 @@ class FemaleFetalModel:
                 sample_data = self.X_test_scaled[sample_index].reshape(1, -1)
                 # 计算SHAP值
                 sample_shap_values = explainer.shap_values(sample_data)
-                
+
                 # 专门为瀑布图设置字体和样式
                 plt.figure(figsize=(10, 6))
-                
+
                 # 使用更兼容的ASCII特征名称
                 ascii_feature_names = []
                 for name in self.feature_names:
@@ -773,33 +770,33 @@ class FemaleFetalModel:
                         ascii_feature_names.append(name)
                     except UnicodeEncodeError:
                         # 使用更直观的编号命名
-                        ascii_feature_names.append(f"Feature_{len(ascii_feature_names)+1}")
-                
+                        ascii_feature_names.append(f"Feature_{len(ascii_feature_names) + 1}")
+
                 # 创建自定义瀑布图而不是使用SHAP的内置函数
                 # 这样我们可以完全控制字体和标签
                 try:
                     # 计算基准值和特征贡献
                     base_value = explainer.expected_value
                     feature_values = sample_shap_values[0]
-                    
+
                     # 按绝对贡献排序
                     indices = np.argsort(np.abs(feature_values))[::-1]
                     sorted_names = [ascii_feature_names[i] for i in indices]
                     sorted_values = feature_values[indices]
-                    
+
                     # 创建瀑布图数据
                     cum_values = np.zeros(len(sorted_values) + 1)
                     cum_values[0] = base_value
                     for i in range(len(sorted_values)):
-                        cum_values[i+1] = cum_values[i] + sorted_values[i]
-                    
+                        cum_values[i + 1] = cum_values[i] + sorted_values[i]
+
                     # 绘制瀑布图
                     fig, ax = plt.subplots(figsize=(12, 8))
-                    
+
                     # 绘制基准线和最终预测线
                     ax.axhline(y=base_value, color='gray', linestyle='-', alpha=0.3)
                     ax.axhline(y=base_value + np.sum(feature_values), color='blue', linestyle='-', alpha=0.3)
-                    
+
                     # 绘制特征贡献
                     for i in range(len(sorted_values)):
                         # 判断是增加还是减少
@@ -809,68 +806,68 @@ class FemaleFetalModel:
                         else:
                             color = 'blue'
                             label = f"{sorted_values[i]:.3f}"  # 负号不需要额外添加
-                        
+
                         # 绘制柱子
                         ax.bar(i, sorted_values[i], bottom=cum_values[i], width=0.6,
-                              color=color, alpha=0.7)
-                        
+                               color=color, alpha=0.7)
+
                         # 添加数值标签，使用普通减号字符而不是Unicode负号
                         if sorted_values[i] < 0:
                             label = label.replace("−", "-").replace("–", "-")
-                        y_pos = cum_values[i] + sorted_values[i]/2
+                        y_pos = cum_values[i] + sorted_values[i] / 2
                         ax.text(i, y_pos, label, ha='center', va='center')
-                    
+
                     # 设置X轴刻度标签
                     ax.set_xticks(range(len(sorted_names)))
                     ax.set_xticklabels(sorted_names, rotation=45, ha='right')
-                    
+
                     # 添加标题和标签
                     ax.set_title(f"SHAP瀑布图")
                     ax.set_ylabel("SHAP值")
                     ax.grid(True, axis='y', alpha=0.3)
-                    
+
                     # 如果有中文特征名称，添加映射图例
                     if any(n != f for n, f in zip(self.feature_names, ascii_feature_names)):
                         legend_text = "\n".join(
-                            [f"{ascii_feature_names[i]}: {self.feature_names[i]}" 
+                            [f"{ascii_feature_names[i]}: {self.feature_names[i]}"
                              for i in range(len(self.feature_names))
                              if ascii_feature_names[i] != self.feature_names[i]])
-                        
+
                         plt.figtext(1.02, 0.5, legend_text, fontsize=9,
-                                   bbox=dict(facecolor='white', alpha=0.8),
-                                   transform=ax.transAxes)
-                    
+                                    bbox=dict(facecolor='white', alpha=0.8),
+                                    transform=ax.transAxes)
+
                     plt.tight_layout()
                     # 修改保存路径
                     plt.savefig(os.path.join(VIS_DIR, f'shap_waterfall_sample_{sample_index}.png'))
                     plt.close()
                 except Exception as e:
                     print(f"自定义瀑布图绘制失败: {e}")
-                    
+
                     # 尝试SHAP库的瀑布图，但使用ASCII特征名称
                     try:
                         shap_explanation = shap.Explanation(
-                            values=sample_shap_values[0], 
-                            base_values=explainer.expected_value, 
-                            data=sample_data[0], 
+                            values=sample_shap_values[0],
+                            base_values=explainer.expected_value,
+                            data=sample_data[0],
                             feature_names=ascii_feature_names
                         )
-                        
+
                         # 强制使用支持负号的字体
                         plt.rcParams['font.sans-serif'] = ['DejaVu Sans', 'Arial'] + plt.rcParams['font.sans-serif']
-                        
+
                         shap.plots.waterfall(shap_explanation, show=False)
-                        
+
                         # 添加特征映射图例
                         legend_text = []
                         for i, (ascii_name, orig_name) in enumerate(zip(ascii_feature_names, self.feature_names)):
                             if ascii_name != orig_name:
                                 legend_text.append(f"{ascii_name}: {orig_name}")
-                        
+
                         if legend_text:
                             plt.figtext(1.05, 0.5, "\n".join(legend_text), fontsize=9,
-                                      bbox=dict(facecolor='white', alpha=0.8))
-                        
+                                        bbox=dict(facecolor='white', alpha=0.8))
+
                         plt.tight_layout()
                         # 修改保存路径
                         plt.savefig(os.path.join(VIS_DIR, f'shap_waterfall_sample_{sample_index}.png'))
@@ -879,10 +876,10 @@ class FemaleFetalModel:
                         print(f"SHAP瀑布图尝试失败: {e}")
                         # 回退到简化的条形图
                         plt.figure(figsize=(10, 6))
-                        plt.bar(range(len(self.feature_names)), 
-                              np.abs(sample_shap_values[0]), 
-                              tick_label=ascii_feature_names,
-                              color='skyblue')
+                        plt.bar(range(len(self.feature_names)),
+                                np.abs(sample_shap_values[0]),
+                                tick_label=ascii_feature_names,
+                                color='skyblue')
                         plt.xticks(rotation=45)
                         plt.title(f"样本 {sample_index} 的特征重要性")
                         plt.tight_layout()
@@ -893,11 +890,11 @@ class FemaleFetalModel:
                 print(f"SHAP瀑布图绘制完全失败: {e}")
                 # 回退到最简单的图表
                 plt.figure(figsize=(10, 6))
-                plt.bar(range(len(self.feature_names)), 
-                      np.abs(shap_values[sample_index]), 
-                      color='skyblue')
-                plt.xticks(range(len(self.feature_names)), 
-                         range(1, len(self.feature_names)+1))
+                plt.bar(range(len(self.feature_names)),
+                        np.abs(shap_values[sample_index]),
+                        color='skyblue')
+                plt.xticks(range(len(self.feature_names)),
+                           range(1, len(self.feature_names) + 1))
                 plt.title(f"样本 {sample_index} 的特征重要性")
                 plt.tight_layout()
                 # 修改保存路径
@@ -908,7 +905,7 @@ class FemaleFetalModel:
         """保存模型"""
         if path is None:
             path = os.path.join(OUT_DIR, 'models/')
-        
+
         if not os.path.exists(path):
             os.makedirs(path)
 
@@ -933,7 +930,7 @@ class FemaleFetalModel:
         """加载模型"""
         if path is None:
             path = os.path.join(OUT_DIR, 'models/')
-        
+
         try:
             if model_name == 'xgb_model':
                 self.xgb_model = pickle.load(open(f"{path}xgb_model.pkl", "rb"))
@@ -976,7 +973,7 @@ class FemaleFetalModel:
         # 选择需要的特征并标准化
         X = features[self.feature_names]
         X_scaled = self.scaler.transform(X)
-        
+
         # 创建具有正确特征名称的DataFrame (解决特征名称警告)
         if hasattr(model, '_Booster') and isinstance(model, lgb.LGBMClassifier):
             # 对于LightGBM模型，确保预测输入保留特征名称
@@ -1001,14 +998,14 @@ class FemaleFetalModel:
 def main():
     # 确保在程序开始时设置中文字体
     set_chinese_font()
-    
+
     # 初始化模型
     model = FemaleFetalModel()
 
     # 尝试加载女胎数据
     female_data_path = 'processed_female.csv'
     male_data_path = 'processed_male.csv'
-    
+
     if os.path.exists(female_data_path):
         print(f"加载女胎数据: {female_data_path}")
         success = model.load_data(female_data_path)
