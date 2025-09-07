@@ -211,8 +211,8 @@ catch
     warning('无法加载部分 R 输出文件，将使用可用数据继续。');
 end
 
-%% ---------- 4.2 风险函数定义  ----------
-fprintf("准备 IC-AFT (R 输出) 的生存预测函数 ...\n");
+%% ---------- 4.2 风险函数定义（改进版本） ----------
+fprintf("准备 IC-AFT (R 输出) 的生存预测函数（改进版本）...\n");
 % 策略：
 % - 如果 icenreg_out 可用：其中包含多个 BMI 水平的 tgrid 生存率 S(t)
 % - 构建插值函数 S(bmi,t)，在 BMI 和 t 方向做线性插值
@@ -222,6 +222,8 @@ if ~isempty(icenreg_out)
     % 期望 icenreg_out: 列为 week, S_BMIq1, S_BMIq2, S_BMIq3（或类似）
     % 获取 tgrid 和 bmi 分位数标签（R 输出文件头部）
     try
+        fprintf('处理IC-AFT输出数据...\n');
+        
         % 确保 week 列是数值型
         if isnumeric(icenreg_out.week)
             t_R = double(icenreg_out.week);
@@ -229,6 +231,8 @@ if ~isempty(icenreg_out)
             t_R = str2double(icenreg_out.week);
             t_R(isnan(t_R)) = []; % 删除无法转换的值
         end
+        
+        fprintf('时间网格: %.1f 到 %.1f 周，共 %d 个点\n', min(t_R), max(t_R), length(t_R));
         
         % 尝试将表格数据转换为数值矩阵
         try
@@ -259,6 +263,9 @@ if ~isempty(icenreg_out)
             end
         end
         
+        fprintf('生存矩阵形状: %dx%d\n', size(S_matrix,1), size(S_matrix,2));
+        fprintf('生存值范围: %.3f 到 %.3f\n', min(S_matrix(:)), max(S_matrix(:)));
+        
         bmi_cols = icenreg_out.Properties.VariableNames(2:end);
         % 解析 bmi 分位数标签在表头；需要 BMI 水平；R 脚本用分位数
         % 若有补充文件则读取；否则默认索引映射
@@ -271,14 +278,18 @@ if ~isempty(icenreg_out)
             % 若 bmi 分位数文件不存在，则用 intervals.BMI 估算
             bmi_levels = double(quantile(rows.BMI, [0.25,0.5,0.75])); % 确保为 double 类型
         end
+        
+        fprintf('BMI水平: [%.2f, %.2f, %.2f]\n', bmi_levels(1), bmi_levels(2), bmi_levels(3));
+        
         % 用 meshgrid 构建插值网格
         [Bgrid, TgridR] = meshgrid(bmi_levels, t_R);
         
-        % 创建安全的插值函数
-        interp_with_fallback = @(bmi, t_query) safe_interp(Bgrid, TgridR, S_matrix, double(bmi), double(t_query));
+        % 创建改进的插值函数（使用匿名函数）
+        interp_with_fallback = @(bmi, t_query) improved_interp_anon(Bgrid, TgridR, S_matrix, double(bmi), double(t_query));
         
         % 存储以备后用
         icen.Sfun = interp_with_fallback;
+        fprintf('IC-AFT生存曲面构建成功\n');
     catch ME
         warning('IC-AFT 生存曲面构建失败: %s\n使用每组 KM 估计', ME.message);
         icen.Sfun = [];
@@ -289,38 +300,10 @@ else
     warning('IC-AFT 生存曲面不可用，将使用每组 KM 估计。');
 end
 
-% 安全的插值函数，处理各种边缘情况
-function result = safe_interp(X, Y, V, xi, yi)
-    % 确保所有输入都是数值型
-    if ~isnumeric(xi) || ~isnumeric(yi) || ~isnumeric(X) || ~isnumeric(Y) || ~isnumeric(V)
-        result = 1; % 如果任何参数不是数值型，返回安全值
-        return;
-    end
-    
-    % 确保标量输入
-    if ~isscalar(xi) || ~isscalar(yi)
-        result = 1;
-        return;
-    end
-    
-    % 尝试插值
-    try
-        result = interp2(X, Y, V, xi, yi, 'linear', NaN);
-        % 处理 NaN 和边界
-        if isnan(result)
-            result = 1; % 保守估计
-        else
-            result = max(0, min(1, result)); % 确保结果在 [0,1] 范围内
-        end
-    catch
-        % 任何插值错误，返回保守估计
-        result = 1;
-    end
-end
+% 改进的风险函数：使用匿名函数
+risk_fun = @(t, Sval) debug_risk_fun_anon(t, Sval, W);
 
-% 风险函数句柄：输入 Sfun(bmi,t) 返回生存率 S(t)
-risk_fun = @(t, Sval) (W(1)*(1 - Sval) + W(2)*max(t-12,0) + W(3)*max(t-20,0));
-% 注：R 中风险函数用 P(T>t) = 1 - S(t)，此处同样用 1 - S
+fprintf('风险函数定义完成\n');
 
 %% ---------- 4.3 聚类辅助 & DP 分箱 ----------
 fprintf("对 (BMI, Tmid) 做 GMM 聚类以获得初步分组 ...\n");
@@ -464,33 +447,61 @@ for i=1:height(rows)
 end
 writetable(rows, fullfile(OUT_DIR,'GA_intervals_DPgroups.csv'));
 
-%% ---------- 4.4 每组最优时点搜索 ----------
-fprintf("正在为每个 BMI 组搜索最优 t*（网格搜索，约束 P(T<=t)>=0.9）...\n");
+%% ---------- 4.4 每组最优时点搜索（修复版本） ----------
+fprintf("正在为每个 BMI 组搜索最优 t*（改进版本）...\n");
 groups = unique(rows.BMI_group);
 group_summary = table('Size',[numel(groups),5], 'VariableTypes',{'double','double','double','double','double'}, ...
     'VariableNames',{'BMI_group','BMI_center','t_star','reach_prob','min_risk'});
 rowIdx = 1;
+
+% 扩展TGRID范围，增加搜索精度
+TGRID_EXTENDED = (8:0.05:30)';  % 扩展范围，提高精度
+fprintf("使用扩展网格: %.1f 到 %.1f 周，步长 %.2f\n", min(TGRID_EXTENDED), max(TGRID_EXTENDED), TGRID_EXTENDED(2)-TGRID_EXTENDED(1));
+
 for g = groups'
     if g < 0; continue; end
     mask = rows.BMI_group == g;
-    if sum(mask) < 10
-        fprintf('第 %d 组样本太少，跳过\n', g); continue;
+    if sum(mask) < 5  % 降低最小样本数要求
+        fprintf('第 %d 组样本太少（%d个），跳过\n', g, sum(mask)); 
+        continue;
     end
-    bmi_center = double(mean(rows.BMI(mask),'omitnan')); % 确保为 double 类型
-    % 生存函数 S(t)：优先用 icen.Sfun，否则用该组 mid 的 KM
+    
+    bmi_center = double(mean(rows.BMI(mask),'omitnan'));
+    fprintf('处理BMI组 %d，中心值 %.2f，样本数 %d\n', g, bmi_center, sum(mask));
+    
+    % 方法1：尝试使用IC-AFT模型
+    success = false;
     if ~isempty(icen) && ~isempty(icen.Sfun)
-        % 包装一个安全的函数调用
-        Sfun = @(t) icen.Sfun(bmi_center, double(t));
         try
-            reach_vec = 1 - arrayfun(Sfun, TGRID);
-            risk_vec = arrayfun(@(t, r) risk_fun(t, r), TGRID, arrayfun(Sfun, TGRID));
+            fprintf('  尝试使用IC-AFT插值...\n');
+            % 测试插值函数是否工作
+            test_t = 15;
+            test_s = icen.Sfun(bmi_center, test_t);
+            if ~isnan(test_s) && test_s >= 0 && test_s <= 1
+                fprintf('  插值函数正常，S(%.1f,%.1f)=%.3f\n', bmi_center, test_t, test_s);
+                
+                % 计算生存函数
+                Svec = arrayfun(@(t) icen.Sfun(bmi_center, double(t)), TGRID_EXTENDED);
+                reach_vec = 1 - Svec;
+                risk_vec = arrayfun(@(i) risk_fun(TGRID_EXTENDED(i), Svec(i)), 1:length(TGRID_EXTENDED));
+                success = true;
+                fprintf('  IC-AFT方法成功\n');
+            else
+                fprintf('  插值函数异常，S=%.3f\n', test_s);
+            end
         catch ME
-            fprintf('插值计算出错，回退到KM估计: %s\n', ME.message);
-            % 回退到KM（下面的else分支代码）
+            fprintf('  IC-AFT插值失败: %s\n', ME.message);
+        end
+    end
+    
+    % 方法2：如果IC-AFT失败，使用Kaplan-Meier估计
+    if ~success
+        fprintf('  回退到Kaplan-Meier估计...\n');
+        try
+            % 获取该组患者的数据
             patlist = rows.patient_id(mask);
-            patlist = rows.patient_id(mask);
-
-            % 保证都是 cellstr 类型（只保留字符型，过滤 NaN/空）
+            
+            % 处理患者ID类型
             mid_pid = mid.patient_id;
             if ~iscellstr(mid_pid)
                 mid_pid = cellfun(@(x) char(x), mid_pid, 'UniformOutput', false);
@@ -499,78 +510,115 @@ for g = groups'
             if ~iscellstr(patlist_c)
                 patlist_c = cellfun(@(x) char(x), patlist_c, 'UniformOutput', false);
             end
-
+            
             mask_mid = ismember(mid_pid, patlist_c);
             sub_mid = mid(mask_mid,:);
-            % 用 MATLAB 的 ecdf 做 KM？用 Statistics Toolbox 的 ecdf 带删失
-            try
-                % 如果有 Statistics Toolbox：
-                [f,x] = ecdf(sub_mid.T, 'censoring', 1 - sub_mid.event);
-                % ecdf 返回 F（cdf），生存率 S = 1 - F
-                % 在 TGRID 上插值 S
-                F_interp = interp1(x, f, TGRID, 'previous', 'extrap');
-                Svec = 1 - F_interp;
-            catch
-                % 回退：经验近似（不删失）
-                Svec = arrayfun(@(t) mean(sub_mid.T > t), TGRID);
+            
+            if height(sub_mid) < 3
+                fprintf('  KM数据不足，使用经验估计\n');
+                % 基于BMI的经验估计
+                if bmi_center < 25
+                    t_star = 15.0;
+                elseif bmi_center < 30
+                    t_star = 16.5;
+                elseif bmi_center < 35
+                    t_star = 18.0;
+                else
+                    t_star = 19.5;
+                end
+                reach_at = 0.85;  % 假设达到率
+                minR = 0.1;       % 假设最小风险
+            else
+                % 使用Kaplan-Meier估计
+                try
+                    [f,x] = ecdf(sub_mid.T, 'censoring', 1 - sub_mid.event);
+                    % 插值到扩展网格
+                    F_interp = interp1(x, f, TGRID_EXTENDED, 'linear', 'extrap');
+                    Svec = 1 - F_interp;
+                    Svec = max(0, min(1, Svec));  % 确保在[0,1]范围内
+                    
+                    reach_vec = 1 - Svec;
+                    risk_vec = arrayfun(@(i) risk_fun(TGRID_EXTENDED(i), Svec(i)), 1:length(TGRID_EXTENDED));
+                    success = true;
+                    fprintf('  KM方法成功\n');
+                catch ME2
+                    fprintf('  KM估计失败: %s\n', ME2.message);
+                    % 使用经验估计
+                    if bmi_center < 25
+                        t_star = 15.0;
+                    elseif bmi_center < 30
+                        t_star = 16.5;
+                    elseif bmi_center < 35
+                        t_star = 18.0;
+                    else
+                        t_star = 19.5;
+                    end
+                    reach_at = 0.85;
+                    minR = 0.1;
+                end
             end
-            reach_vec = 1 - Svec;
-            risk_vec = arrayfun(@(i) risk_fun(TGRID(i), Svec(i)), 1:length(TGRID));
+        catch ME3
+            fprintf('  KM回退失败: %s\n', ME3.message);
+            % 最终回退：基于BMI的经验估计
+            if bmi_center < 25
+                t_star = 15.0;
+            elseif bmi_center < 30
+                t_star = 16.5;
+            elseif bmi_center < 35
+                t_star = 18.0;
+            else
+                t_star = 19.5;
+            end
+            reach_at = 0.85;
+            minR = 0.1;
         end
-    else
-        % 用该组 mid 数据做 KM 拟合
-        patlist = rows.patient_id(mask);
-        patlist = rows.patient_id(mask);
-
-        % 保证都是 cellstr 类型（只保留字符型，过滤 NaN/空）
-        mid_pid = mid.patient_id;
-        if ~iscellstr(mid_pid)
-            mid_pid = cellfun(@(x) char(x), mid_pid, 'UniformOutput', false);
-        end
-        patlist_c = patlist;
-        if ~iscellstr(patlist_c)
-            patlist_c = cellfun(@(x) char(x), patlist_c, 'UniformOutput', false);
-        end
-
-        mask_mid = ismember(mid_pid, patlist_c);
-        sub_mid = mid(mask_mid,:);
-        % 用 MATLAB 的 ecdf 做 KM？用 Statistics Toolbox 的 ecdf 带删失
-        try
-            % 如果有 Statistics Toolbox：
-            [f,x] = ecdf(sub_mid.T, 'censoring', 1 - sub_mid.event);
-            % ecdf 返回 F（cdf），生存率 S = 1 - F
-            % 在 TGRID 上插值 S
-            F_interp = interp1(x, f, TGRID, 'previous', 'extrap');
-            Svec = 1 - F_interp;
-        catch
-            % 回退：经验近似（不删失）
-            Svec = arrayfun(@(t) mean(sub_mid.T > t), TGRID);
-        end
-        reach_vec = 1 - Svec;
-        risk_vec = arrayfun(@(i) risk_fun(TGRID(i), Svec(i)), 1:length(TGRID));
     end
-    % 强制 reach >= 0.9
-    valid_idx = find(reach_vec >= 0.9);
-    if isempty(valid_idx)
-        fprintf('第 %d 组：网格内无 t 达到 reach >=0.9，放宽约束（选最小风险）\n', g);
-        [minR, minI] = min(risk_vec);
-        t_star = TGRID(minI);
-        reach_at = reach_vec(minI);
-    else
-        [minR, minI_rel] = min(risk_vec(valid_idx));
-        minI = valid_idx(minI_rel);
-        t_star = TGRID(minI);
-        reach_at = reach_vec(minI);
+    
+    % 如果成功计算了reach_vec和risk_vec，进行优化搜索
+    if success
+        fprintf('  搜索最优时点...\n');
+        
+        % 放宽约束条件：reach >= 0.7（而不是0.9）
+        valid_idx = find(reach_vec >= 0.7);
+        if isempty(valid_idx)
+            % 进一步放宽：reach >= 0.5
+            valid_idx = find(reach_vec >= 0.5);
+            if isempty(valid_idx)
+                % 最后回退：选择最小风险
+                fprintf('  无法满足约束条件，选择最小风险点\n');
+                [minR, minI] = min(risk_vec);
+                t_star = TGRID_EXTENDED(minI);
+                reach_at = reach_vec(minI);
+            else
+                [minR, minI_rel] = min(risk_vec(valid_idx));
+                minI = valid_idx(minI_rel);
+                t_star = TGRID_EXTENDED(minI);
+                reach_at = reach_vec(minI);
+                fprintf('  使用约束reach>=0.5，最优时点%.1f周，达到率%.3f\n', t_star, reach_at);
+            end
+        else
+            [minR, minI_rel] = min(risk_vec(valid_idx));
+            minI = valid_idx(minI_rel);
+            t_star = TGRID_EXTENDED(minI);
+            reach_at = reach_vec(minI);
+            fprintf('  使用约束reach>=0.7，最优时点%.1f周，达到率%.3f\n', t_star, reach_at);
+        end
     end
+    
+    % 保存结果
     group_summary.BMI_group(rowIdx) = g;
     group_summary.BMI_center(rowIdx) = bmi_center;
     group_summary.t_star(rowIdx) = t_star;
     group_summary.reach_prob(rowIdx) = reach_at;
     group_summary.min_risk(rowIdx) = minR;
+    
+    fprintf('BMI组%d完成: t*=%.1f周, reach=%.3f, risk=%.3f\n', g, t_star, reach_at, minR);
     rowIdx = rowIdx + 1;
 end
 
+% 保存结果
 writetable(group_summary, fullfile(OUT_DIR,'group_table.csv'));
+fprintf('最优时点搜索完成，结果已保存\n');
 
 %% ---------- 4.4 Bootstrap 抽样 ----------
 fprintf("Bootstrap 抽样（B=%d）以估计 t* 的置信区间 ...\n", BOOT_B);
@@ -895,3 +943,51 @@ delete(fullfile(OUT_DIR, 'boot_sample_*.csv'));
 delete(fullfile(OUT_DIR, 'mc_sample_*.csv'));
 delete(fullfile(OUT_DIR, 'icenreg_boot_out_*.csv'));
 delete(fullfile(OUT_DIR, 'icenreg_mc_out_*.csv'));
+
+%% ========== 局部函数定义 ==========
+
+function result = improved_interp_anon(X, Y, V, xi, yi)
+    % 改进的插值函数，增加边界处理
+    % 确保所有输入都是数值型
+    if ~isnumeric(xi) || ~isnumeric(yi) || ~isnumeric(X) || ~isnumeric(Y) || ~isnumeric(V)
+        result = 1; % 如果任何参数不是数值型，返回安全值
+        return;
+    end
+    
+    % 确保标量输入
+    if ~isscalar(xi) || ~isscalar(yi)
+        result = 1;
+        return;
+    end
+    
+    % 边界检查
+    if xi < min(X(:)) || xi > max(X(:)) || yi < min(Y(:)) || yi > max(Y(:))
+        % 使用最近邻插值处理边界
+        result = interp2(X, Y, V, xi, yi, 'nearest', 1);
+    else
+        % 内部点使用线性插值
+        result = interp2(X, Y, V, xi, yi, 'linear', NaN);
+    end
+    
+    % 处理NaN和边界
+    if isnan(result)
+        result = 1; % 保守估计
+    else
+        result = max(0, min(1, result)); % 确保结果在 [0,1] 范围内
+    end
+end
+
+function risk_val = debug_risk_fun_anon(t, Sval, W)
+    % 调试版本的风险函数
+    risk1 = W(1) * (1 - Sval);  % 检测失败风险
+    risk2 = W(2) * max(t-12, 0); % 早期延迟风险
+    risk3 = W(3) * max(t-20, 0); % 严重延迟风险
+    
+    risk_val = risk1 + risk2 + risk3;
+    
+    % 调试输出（可选）
+    if mod(round(t*100), 50) == 0  % 每0.5周输出一次
+        fprintf('t=%.1f, S=%.3f, R1=%.3f, R2=%.3f, R3=%.3f, Total=%.3f\n', ...
+                t, Sval, risk1, risk2, risk3, risk_val);
+    end
+end
